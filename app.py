@@ -1,7 +1,8 @@
+import os
+os.system("pip install --no-cache-dir pymupdf")
+import fitz  # PyMuPDF
 import streamlit as st
-import fitz  # PyMuPDF para leer PDFs
-import pandas as pd
-import re
+
 from datetime import datetime
 
 def extract_shifts(lines):
