@@ -77,24 +77,39 @@ if uploaded_file is not None:
             return records
 
         # Función para detectar meal violations
-        def check_meal_violations(shifts):
-            violations = []
-            for shift in shifts:
-                total_hours = shift["Horas Trabajadas"]
+def check_meal_violations(shifts):
+    """Identifica violaciones de meal break según la regla establecida."""
+    violations = []
+    
+    for shift in shifts:
+        total_hours = shift["Horas Trabajadas"]
+        entry_time = datetime.strptime(shift["Entrada"], "%I:%M %p")
+        exit_time = datetime.strptime(shift["Salida"], "%I:%M %p")
 
-                # Verifica si trabajó más de 6 horas sin break antes de la 5ta hora
-                if total_hours > 6:
-                    violations.append({
-                        "Employee #": shift["Employee #"],
-                        "Empleado": shift["Empleado"],
-                        "Fecha": shift["Fecha"],
-                        "Entrada": shift["Entrada"],
-                        "Salida": shift["Salida"],
-                        "Horas Trabajadas": total_hours,
-                        "Violación": "Meal Violation"
-                    })
+        # Determinar si hay Meal Violation
+        if total_hours > 6:
+            took_break = False
+            for check in shifts:
+                if check["Empleado"] == shift["Empleado"] and check["Fecha"] == shift["Fecha"]:
+                    break_time = datetime.strptime(check["Salida"], "%I:%M %p")
+                    break_duration = (break_time - entry_time).total_seconds() / 3600  # Horas desde entrada hasta el break
 
-            return violations
+                    if 0 < break_duration <= 5:  # Si tomó break dentro de las primeras 5 horas
+                        took_break = True
+                        break
+
+            if not took_break:
+                violations.append({
+                    "Employee #": shift["Employee #"],
+                    "Empleado": shift["Empleado"],
+                    "Fecha": shift["Fecha"],
+                    "Entrada": shift["Entrada"],
+                    "Salida": shift["Salida"],
+                    "Horas Trabajadas": total_hours,
+                    "Violación": "Meal Violation"
+                })
+
+    return violations
 
         # Procesar horarios
         shifts = extract_shifts(lines)
