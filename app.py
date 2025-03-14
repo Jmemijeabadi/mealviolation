@@ -2,7 +2,6 @@ import os
 os.system("pip install --no-cache-dir pymupdf")
 import fitz  # PyMuPDF
 import streamlit as st
-
 from datetime import datetime
 
 def extract_shifts(lines):
