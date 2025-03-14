@@ -4,14 +4,6 @@ import pandas as pd
 import re
 from datetime import datetime
 
-def extract_lines_from_pdf(pdf_path):
-    """Extrae todas las líneas del PDF."""
-    doc = fitz.open(pdf_path)
-    lines = []
-    for page in doc:
-        lines.extend(page.get_text("text").split("\n"))
-    return lines
-
 def extract_shifts(lines):
     """Extrae registros de entrada y salida con asignación del empleado y número de empleado."""
     records = []
@@ -35,8 +27,9 @@ def extract_shifts(lines):
                 entry_time_str = lines[i + 3]  # Hora de entrada
                 entry_date = lines[i + 4]  # Fecha
                 entry_time = datetime.strptime(f"{entry_date} {entry_time_str}", "%m/%d/%Y %I:%M%p")
-            except:
-                continue
+            except Exception as e:
+                print(f"Error al procesar entrada: {e}")  # Registro de error
+                continue  # Seguir con el siguiente registro
 
         # Detectar salidas ("OUT") asociadas a una entrada previa
         if line == "OUT" and entry_time and current_employee:
@@ -58,4 +51,8 @@ def extract_shifts(lines):
                 entry_time = None
                 entry_date = None
 
-            ex
+            except Exception as e:
+                print(f"Error al procesar salida: {e}")  # Registro de error
+                continue  # Seguir con el siguiente registro
+
+    return records
