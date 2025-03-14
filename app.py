@@ -76,6 +76,26 @@ if uploaded_file is not None:
 
             return records
 
+        # Función para detectar meal violations
+        def check_meal_violations(shifts):
+            violations = []
+            for shift in shifts:
+                total_hours = shift["Horas Trabajadas"]
+
+                # Verifica si trabajó más de 6 horas sin break antes de la 5ta hora
+                if total_hours > 6:
+                    violations.append({
+                        "Employee #": shift["Employee #"],
+                        "Empleado": shift["Empleado"],
+                        "Fecha": shift["Fecha"],
+                        "Entrada": shift["Entrada"],
+                        "Salida": shift["Salida"],
+                        "Horas Trabajadas": total_hours,
+                        "Violación": "Meal Violation"
+                    })
+
+            return violations
+
         # Procesar horarios
         shifts = extract_shifts(lines)
         shifts_df = pd.DataFrame(shifts)
@@ -94,6 +114,25 @@ if uploaded_file is not None:
                 file_name="registros_horarios.csv",
                 mime="text/csv"
             )
+
+            # Detectar meal violations
+            meal_violations = check_meal_violations(shifts)
+            meal_violations_df = pd.DataFrame(meal_violations)
+
+            if meal_violations_df.empty:
+                st.success("✅ No se encontraron violaciones de meal break.")
+            else:
+                st.error("⚠ Se detectaron Meal Violations.")
+                st.dataframe(meal_violations_df)
+
+                # Descargar reporte de Meal Violations
+                csv_violations = meal_violations_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Descargar Reporte de Meal Violations",
+                    data=csv_violations,
+                    file_name="meal_violations_report.csv",
+                    mime="text/csv"
+                )
 
     except Exception as e:
         st.error(f"❌ Error al procesar el PDF: {e}")
