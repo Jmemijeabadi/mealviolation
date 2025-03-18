@@ -19,10 +19,9 @@ def parse_time_records(records):
     """Parses registros de tiempo para estructurar la información."""
     employee_data = {}
     current_employee = None
-    current_date = None
     
-    for line in records:
-        line = line.strip()
+    for i in range(len(records)):
+        line = records[i].strip()
         
         employee_match = re.match(r'(\d{3,4}) - ([A-Za-z ]+)', line)
         if employee_match:
@@ -30,14 +29,9 @@ def parse_time_records(records):
             employee_data[current_employee] = []
             continue
         
-        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', line)
-        if date_match:
-            current_date = date_match.group(1)
-        
-        time_match = re.findall(r'(\d{1,2}:\d{2}[ap]m)', line)
-        if current_employee and current_date and time_match:
-            for time in time_match:
-                employee_data[current_employee].append((current_date, time))
+        time_match = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
+        if current_employee and time_match:
+            employee_data[current_employee].append([(date, time) for date, time in time_match])
     
     return employee_data
 
@@ -45,27 +39,25 @@ def detect_meal_violations(employee_data):
     """Detecta violaciones de Meal Break."""
     violations = []
     
-    for employee, records in employee_data.items():
-        if len(records) >= 2:
-            clock_in = datetime.strptime(records[0][0] + ' ' + records[0][1], "%m/%d/%Y %I:%M%p")
-            clock_out = datetime.strptime(records[-1][0] + ' ' + records[-1][1], "%m/%d/%Y %I:%M%p")
-            work_duration = (clock_out - clock_in).total_seconds() / 3600
-            
-            if work_duration > 6:
-                took_break = False
-                valid_break = False
-                for i in range(1, len(records) - 1):
-                    break_time = datetime.strptime(records[i][0] + ' ' + records[i][1], "%m/%d/%Y %I:%M%p")
-                    break_duration = (break_time - clock_in).total_seconds() / 3600
-                    
-                    if break_duration <= 5:
-                        took_break = True
-                    if break_duration <= 5 and (clock_out - break_time).total_seconds() / 3600 >= 0.5:
-                        valid_break = True
-                        break
+    for employee, shifts in employee_data.items():
+        for shift in shifts:
+            if len(shift) >= 2:
+                clock_in = datetime.strptime(shift[0][0] + ' ' + shift[0][1], "%m/%d/%Y %I:%M%p")
+                clock_out = datetime.strptime(shift[-1][0] + ' ' + shift[-1][1], "%m/%d/%Y %I:%M%p")
+                work_duration = (clock_out - clock_in).total_seconds() / 3600
                 
-                if not valid_break:
-                    violations.append((employee, clock_in.strftime("%Y-%m-%d %I:%M %p"), clock_out.strftime("%Y-%m-%d %I:%M %p"), round(work_duration, 2)))
+                if work_duration > 6:
+                    took_valid_break = False
+                    for i in range(1, len(shift) - 1):
+                        break_time = datetime.strptime(shift[i][0] + ' ' + shift[i][1], "%m/%d/%Y %I:%M%p")
+                        break_duration = (break_time - clock_in).total_seconds() / 3600
+                        
+                        if break_duration <= 5 and (clock_out - break_time).total_seconds() / 3600 >= 0.5:
+                            took_valid_break = True
+                            break
+                    
+                    if not took_valid_break:
+                        violations.append((employee, clock_in.strftime("%Y-%m-%d %I:%M %p"), clock_out.strftime("%Y-%m-%d %I:%M %p"), round(work_duration, 2)))
     
     return pd.DataFrame(violations, columns=['Empleado', 'Hora de Entrada', 'Hora de Salida', 'Horas Trabajadas'])
 
