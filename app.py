@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
-from io import StringIO
+from datetime import datetime
 
 def extract_data_from_pdf(pdf_file):
     """Extrae los registros de tiempo de los empleados desde un archivo PDF."""
@@ -12,10 +12,7 @@ def extract_data_from_pdf(pdf_file):
             text = page.extract_text()
             if text:
                 lines = text.split('\n')
-                for line in lines:
-                    match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
-                    if match:
-                        records.append(line)
+                records.extend(lines)
     return records
 
 def parse_time_records(records):
@@ -24,41 +21,39 @@ def parse_time_records(records):
     current_employee = None
     
     for line in records:
-        if re.search(r'Employee Time Card And Job Detail', line):
-            current_employee = None
-        
-        match = re.search(r'(\d{4}) - ([A-Z ]+)', line)
-        if match:
-            current_employee = match.group(2).strip()
+        employee_match = re.match(r'(\d{4}) - ([A-Z ]+)', line)
+        if employee_match:
+            current_employee = employee_match.group(2).strip()
             employee_data[current_employee] = []
             continue
         
         time_match = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
         if current_employee and time_match:
-            employee_data[current_employee].append(time_match)
+            employee_data[current_employee].append([(date, time) for date, time in time_match])
     
     return employee_data
 
 def detect_meal_violations(employee_data):
     """Detecta violaciones de descanso según las reglas establecidas."""
     violations = []
+    
     for employee, records in employee_data.items():
-        for record in records:
-            if len(record) >= 2:
-                clock_in = pd.to_datetime(record[0][0] + ' ' + record[0][1])
-                clock_out = pd.to_datetime(record[-1][0] + ' ' + record[-1][1])
+        for shifts in records:
+            if len(shifts) >= 2:
+                clock_in = datetime.strptime(shifts[0][0] + ' ' + shifts[0][1], "%m/%d/%Y %I:%M%p")
+                clock_out = datetime.strptime(shifts[-1][0] + ' ' + shifts[-1][1], "%m/%d/%Y %I:%M%p")
                 work_duration = (clock_out - clock_in).total_seconds() / 3600
                 
                 if work_duration > 6:
                     took_break = False
-                    for i in range(1, len(record)):
-                        break_time = pd.to_datetime(record[i][0] + ' ' + record[i][1])
+                    for i in range(1, len(shifts)):
+                        break_time = datetime.strptime(shifts[i][0] + ' ' + shifts[i][1], "%m/%d/%Y %I:%M%p")
                         if (break_time - clock_in).total_seconds() / 3600 <= 5:
                             took_break = True
                             break
                     
                     if not took_break:
-                        violations.append((employee, clock_in, clock_out, work_duration))
+                        violations.append((employee, clock_in.strftime("%Y-%m-%d %I:%M %p"), clock_out.strftime("%Y-%m-%d %I:%M %p"), round(work_duration, 2)))
     
     return pd.DataFrame(violations, columns=['Empleado', 'Hora de Entrada', 'Hora de Salida', 'Horas Trabajadas'])
 
