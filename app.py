@@ -14,12 +14,10 @@ def parse_time_logs_with_fixed_employee_names(text):
 
     lines = text.split("\n")
     for line in lines:
-        # Detectar cambio de empleado incluyendo IDs largos
         match_employee = re.match(r"(\d{4,5} - [A-Z ]+)", line)
         if match_employee:
-            current_employee = match_employee.group(1).split(" - ", 1)[-1].strip()  # Extraer solo el nombre
+            current_employee = match_employee.group(1).split(" - ", 1)[-1].strip()
 
-        # Extraer registros de entrada y salida
         match_in = re.search(r"IN (\w{3}) (\d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m) (.+)", line)
         match_out = re.search(r"OUT (\d{1,2}:\d{2}[ap]m) ([\d.]+) (.+)", line)
 
@@ -45,30 +43,26 @@ def detect_meal_violations(df):
         for i, row in group.iterrows():
             if row["Direction"] == "IN":
                 if shift_start is None:
-                    shift_start = row["Datetime"]  # Registrar inicio del turno
-                shift_end = row["Datetime"]  # Actualizar fin de turno en cada entrada
+                    shift_start = row["Datetime"]
+                shift_end = row["Datetime"]
 
-            # Identificar descansos
             if "On Break" in row["Status"] or "Break" in row["Status"]:
                 breaks.append(row["Datetime"])
 
-        # Evaluar si el turno supera las 6 horas y si hubo un descanso adecuado
         if shift_start and shift_end:
             total_hours = (shift_end - shift_start).total_seconds() / 3600
 
             if total_hours > 6:
-                # Verificar si tomó un descanso de al menos 30 minutos antes de la quinta hora
                 took_break = any(
-                    (b - shift_start).total_seconds() / 3600 < 5 and (b - shift_start).total_seconds() / 60 >= 30
+                    0 < (b - shift_start).total_seconds() / 3600 < 5 and (b - shift_start).total_seconds() / 60 >= 30
                     for b in breaks
                 )
-
-                # Si no tomó un descanso válido o no tiene breaks registrados, marcar como violación
+                
                 if not took_break or not breaks:
                     violations.append(
                         [employee, shift_start.date(), shift_start.time(), shift_end.time(), "Meal Violation"]
                     )
-
+    
     return pd.DataFrame(violations, columns=["Employee", "Date", "Shift Start", "Shift End", "Violation"])
 
 st.title("Meal Violation Checker")
@@ -84,3 +78,11 @@ if uploaded_file is not None:
     
     st.subheader("Detected Meal Violations")
     st.dataframe(df_violations)
+    
+    if not df_violations.empty:
+        st.download_button(
+            label="Download Violations Report as CSV",
+            data=df_violations.to_csv(index=False),
+            file_name="meal_violations_report.csv",
+            mime="text/csv"
+        )
