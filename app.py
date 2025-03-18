@@ -48,7 +48,8 @@ def detect_meal_violations(employee_data):
                     took_break = False
                     for i in range(1, len(shifts)):
                         break_time = datetime.strptime(shifts[i][0] + ' ' + shifts[i][1], "%m/%d/%Y %I:%M%p")
-                        if (break_time - clock_in).total_seconds() / 3600 <= 5:
+                        break_duration = (break_time - clock_in).total_seconds() / 3600
+                        if 0.5 <= break_duration <= 5:
                             took_break = True
                             break
                     
