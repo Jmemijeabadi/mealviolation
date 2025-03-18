@@ -34,9 +34,10 @@ if uploaded_file is not None:
                 line = lines[i].strip()
 
                 # Detectar el número de empleado y el nombre
-                if re.match(r"\d{5,}", line) and "-" in lines[i + 1]:
-                    current_employee_id = line.strip() + lines[i + 1].split("-")[0].strip()
-                    current_employee = lines[i + 1].split("-")[1].strip()
+                employee_match = re.match(r"(\d{6,}) - (.+)", line)
+                if employee_match:
+                    current_employee_id = employee_match.group(1).strip()
+                    current_employee = employee_match.group(2).strip()
                     continue
 
                 # Detectar entradas ("IN On Time")
