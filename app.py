@@ -14,8 +14,7 @@ def extract_text_from_pdf(pdf_file):
 
 # Función para procesar los datos
 def process_timecard_data(text):
-    # Expresión regular para extraer los datos de entrada y salida
-    pattern = re.compile(r"(\w{3})IN On Time\d+ - (\w+) -\$ (\d{1,2}:\d{2}[ap]m)(\d{1,2}/\d{1,2}/\d{4})\nOUT (\w+ \d*\.\d*)?(\d{1,2}:\d{2}[ap]m)?")
+    pattern = re.compile(r"(\w{3})IN On Time\d+ - (\w+) -\$ (\d{1,2}:\d{2}[ap]m)(\d{1,2}/\d{1,2}/\d{4})\nOUT (\w+)? (\d{1,2}:\d{2}[ap]m)?")
 
     records = []
     current_employee = None
@@ -27,13 +26,14 @@ def process_timecard_data(text):
         else:
             match = pattern.search(line)
             if match:
-                day, job, clock_in, date, break_status, clock_out = match.groups()
+                day, job, clock_in, date, out_status, clock_out = match.groups()
                 clock_in_time = datetime.strptime(f"{date} {clock_in}", "%m/%d/%Y %I:%M%p")
+                clock_out_time = None
+                hours_worked = 0
+                
                 if clock_out:
                     clock_out_time = datetime.strptime(f"{date} {clock_out}", "%m/%d/%Y %I:%M%p")
                     hours_worked = (clock_out_time - clock_in_time).total_seconds() / 3600
-                else:
-                    hours_worked = 0
                 
                 records.append({
                     "Employee": current_employee,
@@ -42,7 +42,10 @@ def process_timecard_data(text):
                     "Clock In": clock_in,
                     "Clock Out": clock_out if clock_out else "N/A",
                     "Hours Worked": round(hours_worked, 2),
-                    "Break Taken": "Yes" if break_status and "On Break" in break_status else "No",
+                    "Break Taken": "Yes" if out_status and "On Break" in out_status else "No",
+                    "Break Time": clock_out if out_status and "On Break" in out_status else "N/A",
+                    "Clock In Time": clock_in_time,
+                    "Clock Out Time": clock_out_time if clock_out_time else None
                 })
 
     return pd.DataFrame(records)
@@ -51,8 +54,22 @@ def process_timecard_data(text):
 def detect_meal_violations(df):
     violations = []
     for _, row in df.iterrows():
-        if row["Hours Worked"] > 6 and row["Break Taken"] == "No":
-            violations.append(row)
+        if row["Hours Worked"] > 6:
+            # Convertir hora de entrada en minutos desde el inicio del día
+            clock_in_time = row["Clock In Time"]
+            break_time = row["Break Time"]
+            took_break = row["Break Taken"] == "Yes"
+
+            if took_break and break_time != "N/A":
+                break_time_dt = datetime.strptime(f"{row['Date']} {break_time}", "%m/%d/%Y %I:%M%p")
+                time_difference = (break_time_dt - clock_in_time).total_seconds() / 3600
+
+                # Si el descanso ocurrió después de la quinta hora → Meal Violation
+                if time_difference > 5:
+                    violations.append(row)
+            elif not took_break:
+                # No tomó descanso → Meal Violation
+                violations.append(row)
 
     return pd.DataFrame(violations)
 
