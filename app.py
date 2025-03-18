@@ -20,7 +20,7 @@ if uploaded_file is not None:
         st.write("✅ **Texto extraído correctamente. Ahora procesando horarios...**")
 
         def extract_shifts(lines):
-            """Extrae horarios de entrada y salida basándose en la estructura detectada."""
+            """Extrae horarios de entrada y salida de empleados basándose en la estructura detectada."""
             records = []
             current_employee_id, current_employee, current_date = None, None, None
             time_pattern = re.compile(r"\b\d{1,2}:\d{2}[ap]m\b")  # Patrón de hora
@@ -58,7 +58,8 @@ if uploaded_file is not None:
                                     "Entrada": entry_dt.strftime("%I:%M %p"),
                                     "Salida": exit_dt.strftime("%I:%M %p"),
                                     "Horas Trabajadas": round(hours_worked, 2),
-                                    "On Break": "On Break" in exit_time_str  # Identificar si el registro es un break
+                                    "On Break": "On Break" in exit_time_str,  # Identificar si el registro es un break
+                                    "Break Time": exit_dt if "On Break" in exit_time_str else None  # Guardar tiempo de break
                                 })
                                 break
                     except ValueError:
@@ -67,17 +68,15 @@ if uploaded_file is not None:
             return records
 
         def check_meal_violations(shifts_df):
-            """Identifica violaciones de meal break asegurando que el break fue antes de las 5 horas."""
+            """Identifica violaciones de meal break: más de 6 horas trabajadas sin 'On Break' antes de la 5ta hora."""
             violations = []
 
             shifts_df["Entrada"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Entrada"], format="%m/%d/%Y %I:%M %p")
             shifts_df["Salida"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Salida"], format="%m/%d/%Y %I:%M %p")
 
-            # Filtrar empleados que tomaron un break y excluirlos de las violaciones
-            shifts_df_filtered = shifts_df.groupby(["Employee #", "Fecha"]).filter(lambda x: not x["On Break"].any())
-
-            for (employee_id, fecha), group in shifts_df_filtered.groupby(["Employee #", "Fecha"]):
+            for (employee_id, fecha), group in shifts_df.groupby(["Employee #", "Fecha"]):
                 group = group.sort_values(by="Entrada")
+
                 first_entry = group.iloc[0]["Entrada"]
                 last_exit = group.iloc[-1]["Salida"]
                 total_hours = (last_exit - first_entry).total_seconds() / 3600
@@ -85,11 +84,12 @@ if uploaded_file is not None:
                 took_break = False
 
                 for _, row in group.iterrows():
-                    break_time = row["Salida"]
-                    break_duration = (break_time - first_entry).total_seconds() / 3600
-                    if 0 < break_duration <= 5:
-                        took_break = True
-                        break
+                    if row["On Break"]:
+                        break_time = row["Break Time"]
+                        break_duration = (break_time - first_entry).total_seconds() / 3600 if break_time else None
+                        if break_duration is not None and break_duration <= 5:
+                            took_break = True
+                            break
 
                 if total_hours > 6 and not took_break:
                     violations.append({
@@ -117,7 +117,7 @@ if uploaded_file is not None:
             csv = shifts_df.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Descargar CSV con horarios", data=csv, file_name="registros_horarios.csv", mime="text/csv")
 
-            # Detectar meal violations excluyendo registros con On Break
+            # Detectar meal violations
             meal_violations = check_meal_violations(shifts_df)
             meal_violations_df = pd.DataFrame(meal_violations)
 
