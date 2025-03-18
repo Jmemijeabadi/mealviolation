@@ -80,15 +80,18 @@ if uploaded_file is not None:
 
             return records
 
-        # Función mejorada para detectar meal violations considerando los breaks dentro del mismo día
+        # Función corregida para detectar meal violations
         def check_meal_violations(shifts):
             """Identifica violaciones de meal break asegurando que el break fue antes de las 5 horas."""
             violations = []
 
             # Convertimos los datos en un DataFrame para un análisis más fácil
             shifts_df = pd.DataFrame(shifts)
-            
-            # Convertimos los tiempos de entrada y salida en datetime para cálculos
+
+            # Crear una nueva columna para indicar si un registro es un break
+            shifts_df["Es_Break"] = shifts_df["Salida"].astype(str).str.contains("(Break)", regex=False)
+
+            # Convertimos los tiempos de entrada y salida en datetime
             shifts_df["Entrada"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Entrada"], format="%m/%d/%Y %I:%M %p")
             shifts_df["Salida"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Salida"].str.replace(" (Break)", "", regex=True), format="%m/%d/%Y %I:%M %p")
 
@@ -105,9 +108,7 @@ if uploaded_file is not None:
 
                 # Revisamos si hubo un "OUT On Break" antes de las 5 horas
                 for _, row in group.iterrows():
-                    salida_str = str(row["Salida"])  # Convertimos Salida a string para evitar el error
-                    
-                    if "(Break)" in row["Salida"].strftime("%I:%M %p"):  # Buscamos "(Break)" en la hora
+                    if row["Es_Break"]:  # Verificamos si el registro es un break
                         break_time = row["Salida"]
                         break_duration = (break_time - first_entry).total_seconds() / 3600
                         
