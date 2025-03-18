@@ -13,7 +13,6 @@ uploaded_file = st.file_uploader("Sube tu archivo PDF", type=["pdf"])
 if uploaded_file is not None:
     st.success("📁 Archivo subido correctamente")
     
-    # Leer PDF directamente desde memoria
     try:
         doc = fitz.open(stream=BytesIO(uploaded_file.read()), filetype="pdf")
         lines = []
@@ -24,13 +23,15 @@ if uploaded_file is not None:
 
         # Función para extraer horarios de los empleados
         def extract_shifts(lines):
+            """Extrae horarios de entrada y salida basándose en la estructura detectada."""
             records = []
             current_employee_id = None
             current_employee = None
-            entry_time = None
-            entry_date_str = None
+            current_date = None
 
-            for i in range(len(lines) - 4):
+            time_pattern = re.compile(r"\b\d{1,2}:\d{2}[ap]m\b")  # Patrón de hora
+
+            for i in range(len(lines) - 3):
                 line = lines[i].strip()
 
                 # Detectar el número de empleado y el nombre
@@ -40,47 +41,40 @@ if uploaded_file is not None:
                     current_employee = employee_match.group(2).strip()
                     continue
 
-                # Detectar entradas ("IN On Time")
-                if line == "IN" and "On Time" in lines[i + 1] and current_employee_id is not None:
+                # Detectar fechas explícitas en el formato MM/DD/YYYY
+                if re.match(r"\d{1,2}/\d{1,2}/\d{4}", line):
+                    current_date = line
+
+                # Buscar líneas con horarios y asignarlas a IN/OUT según su posición
+                if time_pattern.search(line) and current_employee_id and current_date:
                     try:
-                        entry_time_str = lines[i + 2].strip()
-                        if not re.search(r"\d{1,2}:\d{2}[ap]m", entry_time_str):
-                            entry_time_str = lines[i + 3].strip()
-                        entry_date_str = lines[i + 4].strip()
-                        entry_time = datetime.strptime(f"{entry_date_str} {entry_time_str}", "%m/%d/%Y %I:%M%p")
-                    except:
-                        entry_time = None  
+                        entry_time_str = line  # Hora detectada
+                        entry_dt = datetime.strptime(f"{current_date} {entry_time_str}", "%m/%d/%Y %I:%M%p")
 
-                # Detectar salidas ("OUT On Time" o "OUT On Break") asociadas a una entrada previa
-                if "OUT" in line and entry_time and current_employee_id is not None:
-                    try:
-                        exit_time_str = lines[i + 2].strip()
-                        if not re.search(r"\d{1,2}:\d{2}[ap]m", exit_time_str):
-                            exit_time_str = lines[i + 3].strip()
-                        exit_time = datetime.strptime(f"{entry_date_str} {exit_time_str}", "%m/%d/%Y %I:%M%p")
+                        # Buscar la salida en las siguientes líneas
+                        for j in range(i + 1, len(lines) - 1):
+                            if time_pattern.search(lines[j]):
+                                exit_time_str = lines[j].strip()
+                                exit_dt = datetime.strptime(f"{current_date} {exit_time_str}", "%m/%d/%Y %I:%M%p")
+                                hours_worked = (exit_dt - entry_dt).total_seconds() / 3600
 
-                        # Calcular horas trabajadas
-                        hours_worked = (exit_time - entry_time).total_seconds() / 3600
+                                # Registrar la entrada y salida
+                                records.append({
+                                    "Employee #": current_employee_id,
+                                    "Empleado": current_employee,
+                                    "Fecha": current_date,
+                                    "Entrada": entry_dt.strftime("%I:%M %p"),
+                                    "Salida": exit_dt.strftime("%I:%M %p"),
+                                    "Horas Trabajadas": round(hours_worked, 2)
+                                })
+                                break  # Solo tomamos la primera coincidencia de salida
 
-                        # Agregar registro con Employee # y Empleado correctos
-                        records.append({
-                            "Employee #": current_employee_id,
-                            "Empleado": current_employee,
-                            "Fecha": entry_date_str,
-                            "Entrada": entry_time.strftime("%I:%M %p"),
-                            "Salida": exit_time.strftime("%I:%M %p") + (" (Break)" if "Break" in line else ""),
-                            "Horas Trabajadas": round(hours_worked, 2)
-                        })
-
-                        # Reiniciar valores después de registrar un turno
-                        entry_time = None
-                        entry_date_str = None
-                    except:
+                    except Exception as e:
                         continue
 
             return records
 
-        # Función corregida para detectar meal violations
+        # Función para detectar meal violations
         def check_meal_violations(shifts):
             """Identifica violaciones de meal break asegurando que el break fue antes de las 5 horas."""
             violations = []
@@ -89,11 +83,8 @@ if uploaded_file is not None:
             shifts_df = pd.DataFrame(shifts)
 
             # Crear una nueva columna para indicar si un registro es un break
-            shifts_df["Es_Break"] = shifts_df["Salida"].astype(str).str.contains("(Break)", regex=False)
-
-            # Convertimos los tiempos de entrada y salida en datetime
             shifts_df["Entrada"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Entrada"], format="%m/%d/%Y %I:%M %p")
-            shifts_df["Salida"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Salida"].str.replace(" (Break)", "", regex=True), format="%m/%d/%Y %I:%M %p")
+            shifts_df["Salida"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Salida"], format="%m/%d/%Y %I:%M %p")
 
             # Iteramos por cada empleado y fecha
             for (employee_id, fecha), group in shifts_df.groupby(["Employee #", "Fecha"]):
@@ -108,7 +99,7 @@ if uploaded_file is not None:
 
                 # Revisamos si hubo un "OUT On Break" antes de las 5 horas
                 for _, row in group.iterrows():
-                    if row["Es_Break"]:  # Verificamos si el registro es un break
+                    if "(Break)" in row["Salida"]:
                         break_time = row["Salida"]
                         break_duration = (break_time - first_entry).total_seconds() / 3600
                         
