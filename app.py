@@ -41,7 +41,7 @@ if uploaded_file is not None:
                     continue
 
                 # Detectar entradas ("IN On Time")
-                if line == "IN" and "On Time" in lines[i + 1]:
+                if line == "IN" and "On Time" in lines[i + 1] and current_employee_id is not None:
                     try:
                         entry_time_str = lines[i + 2].strip()  # Hora de entrada
                         if not re.search(r"\d{1,2}:\d{2}[ap]m", entry_time_str):
@@ -52,7 +52,7 @@ if uploaded_file is not None:
                         entry_time = None  # Reiniciar en caso de error
 
                 # Detectar salidas ("OUT On Time") asociadas a una entrada previa
-                if line == "OUT" and entry_time and current_employee_id:
+                if line == "OUT" and entry_time and current_employee_id is not None:
                     try:
                         exit_time_str = lines[i + 2].strip()  # Hora de salida
                         if not re.search(r"\d{1,2}:\d{2}[ap]m", exit_time_str):
