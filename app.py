@@ -47,14 +47,18 @@ def detect_meal_violations(employee_data):
             
             if work_duration > 6:
                 took_break = False
+                valid_break = False
                 for i in range(1, len(records) - 1):
                     break_time = datetime.strptime(records[i][0] + ' ' + records[i][1], "%m/%d/%Y %I:%M%p")
                     break_duration = (break_time - clock_in).total_seconds() / 3600
+                    
                     if break_duration <= 5:
                         took_break = True
+                    if break_duration <= 5 and (clock_out - break_time).total_seconds() / 3600 >= 0.5:
+                        valid_break = True
                         break
                 
-                if not took_break:
+                if not valid_break:
                     violations.append((employee, clock_in.strftime("%Y-%m-%d %I:%M %p"), clock_out.strftime("%Y-%m-%d %I:%M %p"), round(work_duration, 2)))
     
     return pd.DataFrame(violations, columns=['Empleado', 'Hora de Entrada', 'Hora de Salida', 'Horas Trabajadas'])
