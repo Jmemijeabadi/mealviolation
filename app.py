@@ -1,76 +1,86 @@
 import streamlit as st
-import pandas as pd
 import pdfplumber
+import pandas as pd
 import re
-from datetime import datetime, timedelta
 
-# Función para extraer datos del PDF
-def extract_data_from_pdf(pdf_path):
-    data = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            lines = text.split('\n')
-            
-            employee_name = None
-            for line in lines:
-                # Detectar nombres de empleados
-                if re.match(r'\d{4} -', line):
-                    employee_name = line.split('-')[-1].strip()
-                
-                match = re.match(r'(\w{3})IN\s+(\w+).*?(\d{1,2}:\d{2}[ap]m)', line)
-                if match and employee_name:
-                    day, status, time = match.groups()
-                    data.append({
-                        'Employee': employee_name,
-                        'Day': day,
-                        'Status': status,
-                        'Time': time
-                    })
-    return pd.DataFrame(data)
+def extract_text_from_pdf(uploaded_file):
+    with pdfplumber.open(uploaded_file) as pdf:
+        text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+    return text
 
-# Función para detectar Meal Violations
+def parse_time_logs_with_fixed_employee_names(text):
+    employee_logs = []
+    current_employee = None
+
+    lines = text.split("\n")
+    for line in lines:
+        # Detectar cambio de empleado incluyendo IDs largos
+        match_employee = re.match(r"(\d{4,5} - [A-Z ]+)", line)
+        if match_employee:
+            current_employee = match_employee.group(1).split(" - ", 1)[-1].strip()  # Extraer solo el nombre
+
+        # Extraer registros de entrada y salida
+        match_in = re.search(r"IN (\w{3}) (\d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m) (.+)", line)
+        match_out = re.search(r"OUT (\d{1,2}:\d{2}[ap]m) ([\d.]+) (.+)", line)
+
+        if match_in and current_employee:
+            day, date, time, status = match_in.groups()
+            employee_logs.append([current_employee, date, time, "IN", status])
+
+        if match_out and current_employee:
+            time, hours, status = match_out.groups()
+            employee_logs.append([current_employee, date, time, "OUT", status])
+
+    return pd.DataFrame(employee_logs, columns=["Employee", "Date", "Time", "Direction", "Status"])
+
 def detect_meal_violations(df):
     violations = []
-    employee_groups = df.groupby('Employee')
-    
-    for employee, group in employee_groups:
-        group = group.sort_values(by='Time')
-        work_sessions = []
-        
-        in_time = None
-        for index, row in group.iterrows():
-            if 'IN' in row['Status']:
-                in_time = datetime.strptime(row['Time'], "%I:%M%p")
-            elif 'OUT' in row['Status'] and in_time:
-                out_time = datetime.strptime(row['Time'], "%I:%M%p")
-                work_duration = (out_time - in_time).seconds / 3600  # Convertir a horas
-                
-                if work_duration > 6:
-                    # Verificar si hubo un break antes de la 5ta hora
-                    break_taken = any(
-                        in_time + timedelta(hours=5) >= datetime.strptime(break_row['Time'], "%I:%M%p")
-                        for _, break_row in group.iterrows() if 'On Break' in break_row['Status']
+
+    for employee, group in df.groupby("Employee"):
+        group = group.sort_values(by="Datetime").reset_index(drop=True)
+        shift_start = None
+        shift_end = None
+        breaks = []
+
+        for i, row in group.iterrows():
+            if row["Direction"] == "IN":
+                if shift_start is None:
+                    shift_start = row["Datetime"]  # Registrar inicio del turno
+                shift_end = row["Datetime"]  # Actualizar fin de turno en cada entrada
+
+            # Identificar descansos
+            if "On Break" in row["Status"] or "Break" in row["Status"]:
+                breaks.append(row["Datetime"])
+
+        # Evaluar si el turno supera las 6 horas y si hubo un descanso adecuado
+        if shift_start and shift_end:
+            total_hours = (shift_end - shift_start).total_seconds() / 3600
+
+            if total_hours > 6:
+                # Verificar si tomó un descanso de al menos 30 minutos antes de la quinta hora
+                took_break = any(
+                    (b - shift_start).total_seconds() / 3600 < 5 and (b - shift_start).total_seconds() / 60 >= 30
+                    for b in breaks
+                )
+
+                # Si no tomó un descanso válido o no tiene breaks registrados, marcar como violación
+                if not took_break or not breaks:
+                    violations.append(
+                        [employee, shift_start.date(), shift_start.time(), shift_end.time(), "Meal Violation"]
                     )
-                    if not break_taken:
-                        violations.append({'Employee': employee, 'Violation': 'Meal Violation'})
-                
-                in_time = None  # Reiniciar el tiempo de entrada
+
+    return pd.DataFrame(violations, columns=["Employee", "Date", "Shift Start", "Shift End", "Violation"])
+
+st.title("Meal Violation Checker")
+
+uploaded_file = st.file_uploader("Upload Employee Time Card PDF", type=["pdf"])
+
+if uploaded_file is not None:
+    text = extract_text_from_pdf(uploaded_file)
+    df_logs = parse_time_logs_with_fixed_employee_names(text)
+    df_logs["Datetime"] = pd.to_datetime(df_logs["Date"] + " " + df_logs["Time"])
+    df_logs = df_logs.sort_values(by=["Employee", "Datetime"])
+    df_violations = detect_meal_violations(df_logs)
     
-    return pd.DataFrame(violations)
-
-# Configuración de la aplicación Streamlit
-st.title("Meal Violation Detector")
-
-uploaded_file = st.file_uploader("Sube un archivo PDF con registros de tiempo", type=["pdf"])
-
-if uploaded_file:
-    st.write("Procesando el archivo...")
-    df = extract_data_from_pdf(uploaded_file)
-    violations_df = detect_meal_violations(df)
-    
-    if not violations_df.empty:
-        st.write("## Empleados con violaciones de descanso")
-        st.dataframe(violations_df)
-    else:
-        st.write("No se encontraron violaciones de descanso en los registros.")
+    st.subheader("Detected Meal Violations")
+    st.dataframe(df_violations)
