@@ -18,18 +18,18 @@ def parse_time_logs_with_fixed_employee_names(text):
         if match_employee:
             current_employee = match_employee.group(1).split(" - ", 1)[-1].strip()
 
-        match_in = re.search(r"IN (\w{3}) (\d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m)", line)
-        match_out = re.search(r"OUT (\d{1,2}:\d{2}[ap]m)", line)
+        match_in = re.search(r"IN (\w{3}) (\d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m) (.*)", line)
+        match_out = re.search(r"OUT (\d{1,2}:\d{2}[ap]m) (.*)", line)
 
         if match_in and current_employee:
-            day, date, time = match_in.groups()
-            employee_logs.append([current_employee, date, time, "IN"])
+            day, date, time, status = match_in.groups()
+            employee_logs.append([current_employee, date, time, "IN", status])
 
         if match_out and current_employee:
-            time = match_out.group(1)
-            employee_logs.append([current_employee, date, time, "OUT"])
+            time, status = match_out.groups()
+            employee_logs.append([current_employee, date, time, "OUT", status])
 
-    return pd.DataFrame(employee_logs, columns=["Employee", "Date", "Time", "Direction"])
+    return pd.DataFrame(employee_logs, columns=["Employee", "Date", "Time", "Direction", "Status"])
 
 def detect_meal_violations(df):
     violations = []
@@ -48,7 +48,7 @@ def detect_meal_violations(df):
             elif row["Direction"] == "OUT":
                 shift_end = row["Datetime"]
 
-            if "Break" in row.get("Status", ""):
+            if "Break" in row.get("Status", "") or "On Break" in row.get("Status", ""):
                 breaks.append(row["Datetime"])
 
         if shift_start and shift_end:
@@ -60,7 +60,7 @@ def detect_meal_violations(df):
                     for b in breaks
                 )
                 
-                if not took_break:
+                if not took_break or not breaks:
                     violations.append([employee, date, shift_start.time(), shift_end.time(), "Meal Violation"])
     
     return pd.DataFrame(violations, columns=["Employee", "Date", "Shift Start", "Shift End", "Violation"])
