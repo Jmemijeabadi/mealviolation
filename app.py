@@ -80,41 +80,50 @@ if uploaded_file is not None:
 
             return records
 
-        # Función para detectar meal violations
+        # Función mejorada para detectar meal violations considerando los breaks dentro del mismo día
         def check_meal_violations(shifts):
-            """Identifica violaciones de meal break solo si no hay un registro de 'OUT On Break' dentro de las primeras 5 horas."""
+            """Identifica violaciones de meal break asegurando que el break fue antes de las 5 horas."""
             violations = []
 
-            for shift in shifts:
-                total_hours = shift["Horas Trabajadas"]
-                entry_time = datetime.strptime(shift["Entrada"], "%I:%M %p")
+            # Convertimos los datos en un DataFrame para un análisis más fácil
+            shifts_df = pd.DataFrame(shifts)
+            
+            # Convertimos los tiempos de entrada y salida en datetime para cálculos
+            shifts_df["Entrada"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Entrada"], format="%m/%d/%Y %I:%M %p")
+            shifts_df["Salida"] = pd.to_datetime(shifts_df["Fecha"] + " " + shifts_df["Salida"].str.replace(" (Break)", "", regex=True), format="%m/%d/%Y %I:%M %p")
 
-                # Aplicar regla de Meal Violation (trabajo mayor a 6 horas sin break)
-                if total_hours > 6:
-                    took_break = False
+            # Iteramos por cada empleado y fecha
+            for (employee_id, fecha), group in shifts_df.groupby(["Employee #", "Fecha"]):
+                group = group.sort_values(by="Entrada")  # Ordenamos por entrada
+                
+                # Identificamos la primera entrada y la última salida del turno
+                first_entry = group.iloc[0]["Entrada"]
+                last_exit = group.iloc[-1]["Salida"]
+                total_hours = (last_exit - first_entry).total_seconds() / 3600  # Total de horas trabajadas
+                
+                took_break = False
 
-                    # Buscar si hay un "OUT On Break" dentro de las primeras 5 horas
-                    for check in shifts:
-                        if check["Empleado"] == shift["Empleado"] and check["Fecha"] == shift["Fecha"]:
-                            break_time = datetime.strptime(check["Salida"].split(" ")[0], "%I:%M")  
-                            break_duration = (break_time - entry_time).total_seconds() / 3600 
+                # Revisamos si hubo un "OUT On Break" antes de las 5 horas
+                for _, row in group.iterrows():
+                    if "(Break)" in row["Salida"]:
+                        break_time = row["Salida"]
+                        break_duration = (break_time - first_entry).total_seconds() / 3600
+                        
+                        if 0 < break_duration <= 5:  # Se tomó el break antes de 5 horas
+                            took_break = True
+                            break  # No hay necesidad de seguir buscando
 
-                            # Si hubo un break real dentro de las primeras 5 horas, no se marca como violación
-                            if 0 < break_duration <= 5 and "(Break)" in check["Salida"]:
-                                took_break = True
-                                break
-
-                    # Si no tomó un descanso dentro de las primeras 5 horas, es violación
-                    if not took_break:
-                        violations.append({
-                            "Employee #": shift["Employee #"],
-                            "Empleado": shift["Empleado"],
-                            "Fecha": shift["Fecha"],
-                            "Entrada": shift["Entrada"],
-                            "Salida": shift["Salida"],
-                            "Horas Trabajadas": total_hours,
-                            "Violación": "Meal Violation"
-                        })
+                # Si trabajó más de 6 horas sin un break antes de 5 horas, es una violación
+                if total_hours > 6 and not took_break:
+                    violations.append({
+                        "Employee #": employee_id,
+                        "Empleado": group.iloc[0]["Empleado"],
+                        "Fecha": fecha,
+                        "Entrada": first_entry.strftime("%I:%M %p"),
+                        "Salida": last_exit.strftime("%I:%M %p"),
+                        "Horas Trabajadas": round(total_hours, 2),
+                        "Violación": "Meal Violation"
+                    })
 
             return violations
 
