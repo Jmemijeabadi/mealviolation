@@ -72,17 +72,26 @@ uploaded_file = st.file_uploader("Upload Employee Time Card PDF", type=["pdf"])
 if uploaded_file is not None:
     text = extract_text_from_pdf(uploaded_file)
     df_logs = parse_time_logs_with_fixed_employee_names(text)
-    df_logs["Datetime"] = pd.to_datetime(df_logs["Date"] + " " + df_logs["Time"])
-    df_logs = df_logs.sort_values(by=["Employee", "Datetime"])
-    df_violations = detect_meal_violations(df_logs)
     
-    st.subheader("Detected Meal Violations")
-    st.dataframe(df_violations)
-    
-    if not df_violations.empty:
-        st.download_button(
-            label="Download Violations Report as CSV",
-            data=df_violations.to_csv(index=False),
-            file_name="meal_violations_report.csv",
-            mime="text/csv"
-        )
+    # Validar si las columnas necesarias tienen datos válidos
+    if not df_logs.empty and "Date" in df_logs.columns and "Time" in df_logs.columns:
+        try:
+            df_logs["Datetime"] = pd.to_datetime(df_logs["Date"] + " " + df_logs["Time"], errors='coerce')
+            df_logs = df_logs.dropna(subset=["Datetime"])  # Eliminar filas con valores NaT
+            df_logs = df_logs.sort_values(by=["Employee", "Datetime"])
+            df_violations = detect_meal_violations(df_logs)
+            
+            st.subheader("Detected Meal Violations")
+            st.dataframe(df_violations)
+            
+            if not df_violations.empty:
+                st.download_button(
+                    label="Download Violations Report as CSV",
+                    data=df_violations.to_csv(index=False),
+                    file_name="meal_violations_report.csv",
+                    mime="text/csv"
+                )
+        except Exception as e:
+            st.error(f"Error processing date and time data: {e}")
+    else:
+        st.error("No valid data found in the uploaded PDF.")
