@@ -1,58 +1,58 @@
 import streamlit as st
-import fitz  # PyMuPDF para leer PDFs
+import pdfplumber
 import pandas as pd
 import re
-from datetime import datetime
 
-def extract_shifts(lines):
-    """Extrae registros de entrada y salida con asignación del empleado y número de empleado."""
-    records = []
-    current_employee = None
+# Función para extraer datos de empleados y tiempos
+
+def extract_time_records(pdf_text):
+    employee_pattern = re.compile(r"(?P<employee_id>\d{4,7}) - (?P<employee_name>[A-Z\s-]+)")
+    time_pattern = re.compile(
+        r"(\d+ - [A-Z\s-]+)\s+IN\s+(\w{3})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)\s+(On Time|Early)"
+    )
+
+    employees = {}
+    time_records = []
     current_employee_id = None
-    entry_time = None
-    entry_date = None
+    current_employee_name = None
 
-    for i in range(len(lines) - 4):
-        line = lines[i]
-
-        # Detectar el número y nombre del empleado
-        employee_match = re.match(r"(\d{6,}) - (.+)", line)
-        if employee_match:
-            current_employee_id = employee_match.group(1).strip()
-            current_employee = employee_match.group(2).strip()
-
-        # Detectar entradas ("IN")
-        if line == "IN" and lines[i + 1] == "On Time":
-            try:
-                entry_time_str = lines[i + 3]  # Hora de entrada
-                entry_date = lines[i + 4]  # Fecha
-                entry_time = datetime.strptime(f"{entry_date} {entry_time_str}", "%m/%d/%Y %I:%M%p")
-            except Exception as e:
-                print(f"Error al procesar entrada: {e}")  # Registro de error
-                continue  # Seguir con el siguiente registro
-
-        # Detectar salidas ("OUT") asociadas a una entrada previa
-        if line == "OUT" and entry_time and current_employee:
-            try:
-                exit_time_str = lines[i + 3]  # Hora de salida
-                exit_time = datetime.strptime(f"{entry_date} {exit_time_str}", "%m/%d/%Y %I:%M%p")
-
-                # Agregar registro
-                records.append({
-                    "Employee #": current_employee_id,
-                    "Empleado": current_employee,
-                    "Fecha": entry_date,
-                    "Entrada": entry_time.strftime("%I:%M %p"),
-                    "Salida": exit_time.strftime("%I:%M %p"),
-                    "Horas Trabajadas": (exit_time - entry_time).total_seconds() / 3600
+    for line in pdf_text.split("\n"):
+        emp_match = employee_pattern.search(line)
+        if emp_match:
+            current_employee_id = emp_match.group("employee_id")
+            current_employee_name = emp_match.group("employee_name")
+        elif "IN " in line and current_employee_id:
+            time_match = time_pattern.search(line)
+            if time_match:
+                time_records.append({
+                    "employee_id": current_employee_id,
+                    "employee_name": current_employee_name,
+                    "job": time_match.group(1),
+                    "day": time_match.group(2),
+                    "date": time_match.group(3),
+                    "clock_in": time_match.group(4),
+                    "status": time_match.group(5)
                 })
+    return pd.DataFrame(time_records)
 
-                # Reiniciar valores después de agregar un turno
-                entry_time = None
-                entry_date = None
+# Aplicación en Streamlit
+st.title("Meal Violation Detector")
 
-            except Exception as e:
-                print(f"Error al procesar salida: {e}")  # Registro de error
-                continue  # Seguir con el siguiente registro
+uploaded_file = st.file_uploader("Sube un archivo PDF de registros de tiempo", type=["pdf"])
 
-    return records
+if uploaded_file:
+    with pdfplumber.open(uploaded_file) as pdf:
+        pdf_text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+        df_records = extract_time_records(pdf_text)
+    
+    st.subheader("Registros de Tiempo Extraídos")
+    st.dataframe(df_records)
+
+    # Identificar Meal Violations
+    violations = df_records.groupby("employee_id").filter(
+        lambda x: (x["clock_in"].apply(lambda t: int(t.split(":")[0]) >= 5).any())
+    )
+    violations["violation"] = True
+
+    st.subheader("Meal Violations Detectadas")
+    st.dataframe(violations)
