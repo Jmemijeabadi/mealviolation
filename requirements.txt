@@ -2,3 +2,4 @@ streamlit
 pymupdf
 pandas
 watchdog
+pdfplumber
