@@ -34,8 +34,8 @@ def extract_time_records(pdf_text):
                 })
     return pd.DataFrame(time_records)
 
-# Función para convertir horas a formato 24h y verificar Meal Violations
-def hour_exceeds_limit(time_str, limit=5):
+# Función para convertir horas a formato 24h
+def convert_to_24h(time_str):
     try:
         time_match = re.search(r"(\d{1,2}):(\d{2})([ap]m)", time_str)
         if time_match:
@@ -44,9 +44,9 @@ def hour_exceeds_limit(time_str, limit=5):
                 hour += 12  # Convertir PM a formato 24h
             elif period == "am" and hour == 12:
                 hour = 0  # Convertir 12 AM a 0 horas
-            return hour >= limit
+            return hour + minute / 60  # Convertir a decimal para cálculos
     except:
-        return False  # Evitar errores si el formato no es el esperado
+        return None  # Retornar None en caso de error
 
 # Aplicación en Streamlit
 st.title("Meal Violation Detector")
@@ -64,15 +64,26 @@ if uploaded_file:
         st.subheader("Registros de Tiempo Extraídos")
         st.dataframe(df_records)
 
-        # Filtrar solo registros con status válido (excluir "On Break")
-        valid_records = df_records[df_records["status"].isin(["On Time", "Early"])]
+        # Convertir las horas a formato 24h para análisis
+        df_records["clock_in_24h"] = df_records["clock_in"].apply(convert_to_24h)
 
-        # Identificar Meal Violations
-        violations = valid_records[valid_records["clock_in"].apply(hour_exceeds_limit)]
-        violations["violation"] = True
+        # Agrupar por empleado para analizar tiempos de descanso
+        violations = []
+        for employee_id, group in df_records.groupby("employee_id"):
+            group = group.sort_values(by="clock_in_24h")  # Ordenar por hora de entrada
+            
+            first_entry = group.iloc[0]  # Primera entrada del día
+            on_break_records = group[group["status"] == "On Break"]  # Filtrar solo los breaks
+            
+            # Revisar si algún break ocurrió después de la quinta hora de trabajo
+            for _, break_record in on_break_records.iterrows():
+                if break_record["clock_in_24h"] - first_entry["clock_in_24h"] > 5:
+                    violations.append(break_record)
+
+        violations_df = pd.DataFrame(violations)
 
         st.subheader("Meal Violations Detectadas")
-        if violations.empty:
+        if violations_df.empty:
             st.success("No se encontraron Meal Violations.")
         else:
-            st.dataframe(violations)
+            st.dataframe(violations_df)
