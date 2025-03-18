@@ -27,8 +27,7 @@ if uploaded_file is not None:
             records = []
             current_employee = None
             current_employee_id = None
-            entry_time = None
-            entry_date = None
+            shifts = {}
 
             for i in range(len(lines) - 4):
                 line = lines[i]
@@ -38,6 +37,7 @@ if uploaded_file is not None:
                 if employee_match:
                     current_employee_id = employee_match.group(1).strip()
                     current_employee = employee_match.group(2).strip()
+                    continue  # Pasar a la siguiente línea
 
                 # Detectar entradas ("IN")
                 if line == "IN" and lines[i + 1] == "On Time":
@@ -45,31 +45,40 @@ if uploaded_file is not None:
                         entry_time_str = lines[i + 3]  # Hora de entrada
                         entry_date = lines[i + 4]  # Fecha
                         entry_time = datetime.strptime(f"{entry_date} {entry_time_str}", "%m/%d/%Y %I:%M%p")
-                    except:
-                        continue
+                        
+                        # Guardar turno en una lista temporal
+                        shifts.setdefault((current_employee_id, entry_date), []).append({
+                            "Empleado": current_employee,
+                            "Entrada": entry_time
+                        })
+
+                    except Exception as e:
+                        st.warning(f"⚠ Error procesando entrada de {current_employee}: {e}")
 
                 # Detectar salidas ("OUT") asociadas a una entrada previa
-                if line == "OUT" and entry_time and current_employee:
+                if line == "OUT":
                     try:
                         exit_time_str = lines[i + 3]  # Hora de salida
                         exit_time = datetime.strptime(f"{entry_date} {exit_time_str}", "%m/%d/%Y %I:%M%p")
+                        
+                        # Si hay entrada previa en el mismo día, asociar con la salida
+                        if (current_employee_id, entry_date) in shifts:
+                            for shift in shifts[(current_employee_id, entry_date)]:
+                                if "Salida" not in shift:
+                                    shift["Salida"] = exit_time
+                                    shift["Horas Trabajadas"] = (exit_time - shift["Entrada"]).total_seconds() / 3600
+                                    records.append({
+                                        "Employee #": current_employee_id,
+                                        "Empleado": shift["Empleado"],
+                                        "Fecha": entry_date,
+                                        "Entrada": shift["Entrada"].strftime("%I:%M %p"),
+                                        "Salida": shift["Salida"].strftime("%I:%M %p"),
+                                        "Horas Trabajadas": shift["Horas Trabajadas"]
+                                    })
+                                    break  # Asociar solo una salida por entrada
 
-                        # Agregar registro con Employee # y Empleado correctamente asignados
-                        records.append({
-                            "Employee #": current_employee_id,
-                            "Empleado": current_employee,
-                            "Fecha": entry_date,
-                            "Entrada": entry_time.strftime("%I:%M %p"),
-                            "Salida": exit_time.strftime("%I:%M %p"),
-                            "Horas Trabajadas": (exit_time - entry_time).total_seconds() / 3600
-                        })
-
-                        # Reiniciar valores después de agregar un turno
-                        entry_time = None
-                        entry_date = None
-
-                    except:
-                        continue
+                    except Exception as e:
+                        st.warning(f"⚠ Error procesando salida de {current_employee}: {e}")
 
             return records
 
