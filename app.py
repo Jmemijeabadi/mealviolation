@@ -10,7 +10,6 @@ def extract_time_records(pdf_text):
         r"(\d+ - [A-Z\s-]+)\s+IN\s+(\w{3})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)\s+(On Time|Early|On Break)"
     )
 
-    employees = {}
     time_records = []
     current_employee_id = None
     current_employee_name = None
@@ -32,21 +31,22 @@ def extract_time_records(pdf_text):
                     "clock_in": time_match.group(4),
                     "status": time_match.group(5)
                 })
+    
     return pd.DataFrame(time_records)
 
-# Función para convertir horas a formato 24h
+# Función para convertir horas a formato 24h y manejar errores
 def convert_to_24h(time_str):
     try:
-        time_match = re.search(r"(\d{1,2}):(\d{2})([ap]m)", time_str)
+        time_match = re.match(r"(\d{1,2}):(\d{2})([ap]m)", time_str)
         if time_match:
             hour, minute, period = int(time_match.group(1)), int(time_match.group(2)), time_match.group(3)
             if period == "pm" and hour != 12:
-                hour += 12  # Convertir PM a formato 24h
+                hour += 12  # Convertir PM a 24h
             elif period == "am" and hour == 12:
                 hour = 0  # Convertir 12 AM a 0 horas
-            return hour + minute / 60  # Convertir a decimal para cálculos
+            return hour + (minute / 60)  # Convertir a decimal
     except:
-        return None  # Retornar None en caso de error
+        return None  # Si hay un error, devuelve None
 
 # Aplicación en Streamlit
 st.title("Meal Violation Detector")
@@ -64,22 +64,29 @@ if uploaded_file:
         st.subheader("Registros de Tiempo Extraídos")
         st.dataframe(df_records)
 
-        # Convertir las horas a formato 24h para análisis
+        # Convertir la columna "clock_in" a formato 24h
         df_records["clock_in_24h"] = df_records["clock_in"].apply(convert_to_24h)
 
-        # Agrupar por empleado para analizar tiempos de descanso
+        # Manejar errores en la conversión
+        df_records = df_records.dropna(subset=["clock_in_24h"])
+
+        # Agrupar por empleado y fecha para analizar violaciones
         violations = []
-        for employee_id, group in df_records.groupby("employee_id"):
-            group = group.sort_values(by="clock_in_24h")  # Ordenar por hora de entrada
-            
+        for (employee_id, date), group in df_records.groupby(["employee_id", "date"]):
+            group = group.sort_values(by="clock_in_24h")  # Ordenar registros por hora de entrada
             first_entry = group.iloc[0]  # Primera entrada del día
-            on_break_records = group[group["status"] == "On Break"]  # Filtrar solo los breaks
-            
-            # Revisar si algún break ocurrió después de la quinta hora de trabajo
+            first_entry_time = first_entry["clock_in_24h"]
+
+            # Filtrar los registros con estado "On Break"
+            on_break_records = group[group["status"] == "On Break"]
+
+            # Revisar si algún descanso ocurrió después de la quinta hora de trabajo
             for _, break_record in on_break_records.iterrows():
-                if break_record["clock_in_24h"] - first_entry["clock_in_24h"] > 5:
+                break_time = break_record["clock_in_24h"]
+                if break_time - first_entry_time > 5:
                     violations.append(break_record)
 
+        # Crear DataFrame con violaciones
         violations_df = pd.DataFrame(violations)
 
         st.subheader("Meal Violations Detectadas")
