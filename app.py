@@ -43,20 +43,20 @@ if uploaded_file is not None:
                 # Detectar entradas ("IN On Time")
                 if line == "IN" and "On Time" in lines[i + 1] and current_employee_id is not None:
                     try:
-                        entry_time_str = lines[i + 2].strip()  # Hora de entrada
+                        entry_time_str = lines[i + 2].strip()
                         if not re.search(r"\d{1,2}:\d{2}[ap]m", entry_time_str):
-                            entry_time_str = lines[i + 3].strip()  # Ajustar si la línea siguiente es incorrecta
-                        entry_date_str = lines[i + 4].strip()  # Fecha de entrada
+                            entry_time_str = lines[i + 3].strip()
+                        entry_date_str = lines[i + 4].strip()
                         entry_time = datetime.strptime(f"{entry_date_str} {entry_time_str}", "%m/%d/%Y %I:%M%p")
                     except:
-                        entry_time = None  # Reiniciar en caso de error
+                        entry_time = None  
 
-                # Detectar salidas ("OUT On Time") asociadas a una entrada previa
-                if line == "OUT" and entry_time and current_employee_id is not None:
+                # Detectar salidas ("OUT On Time" o "OUT On Break") asociadas a una entrada previa
+                if "OUT" in line and entry_time and current_employee_id is not None:
                     try:
-                        exit_time_str = lines[i + 2].strip()  # Hora de salida
+                        exit_time_str = lines[i + 2].strip()
                         if not re.search(r"\d{1,2}:\d{2}[ap]m", exit_time_str):
-                            exit_time_str = lines[i + 3].strip()  # Ajustar si la línea siguiente es incorrecta
+                            exit_time_str = lines[i + 3].strip()
                         exit_time = datetime.strptime(f"{entry_date_str} {exit_time_str}", "%m/%d/%Y %I:%M%p")
 
                         # Calcular horas trabajadas
@@ -68,7 +68,7 @@ if uploaded_file is not None:
                             "Empleado": current_employee,
                             "Fecha": entry_date_str,
                             "Entrada": entry_time.strftime("%I:%M %p"),
-                            "Salida": exit_time.strftime("%I:%M %p"),
+                            "Salida": exit_time.strftime("%I:%M %p") + (" (Break)" if "Break" in line else ""),
                             "Horas Trabajadas": round(hours_worked, 2)
                         })
 
@@ -82,28 +82,29 @@ if uploaded_file is not None:
 
         # Función para detectar meal violations
         def check_meal_violations(shifts):
-            """Identifica violaciones de meal break según la regla establecida."""
+            """Identifica violaciones de meal break solo si no hay un registro de 'OUT On Break' dentro de las primeras 5 horas."""
             violations = []
 
             for shift in shifts:
                 total_hours = shift["Horas Trabajadas"]
                 entry_time = datetime.strptime(shift["Entrada"], "%I:%M %p")
-                exit_time = datetime.strptime(shift["Salida"], "%I:%M %p")
 
-                # Aplicar regla de Meal Violation
+                # Aplicar regla de Meal Violation (trabajo mayor a 6 horas sin break)
                 if total_hours > 6:
                     took_break = False
 
-                    # Buscar si hay un break dentro de las primeras 5 horas
+                    # Buscar si hay un "OUT On Break" dentro de las primeras 5 horas
                     for check in shifts:
                         if check["Empleado"] == shift["Empleado"] and check["Fecha"] == shift["Fecha"]:
-                            break_time = datetime.strptime(check["Salida"], "%I:%M %p")
-                            break_duration = (break_time - entry_time).total_seconds() / 3600  # Horas desde entrada hasta el break
+                            break_time = datetime.strptime(check["Salida"].split(" ")[0], "%I:%M")  
+                            break_duration = (break_time - entry_time).total_seconds() / 3600 
 
-                            if 2 <= break_duration <= 5:  # Asegurarse de que sea un break real (mínimo 2 horas)
+                            # Si hubo un break real dentro de las primeras 5 horas, no se marca como violación
+                            if 0 < break_duration <= 5 and "(Break)" in check["Salida"]:
                                 took_break = True
                                 break
 
+                    # Si no tomó un descanso dentro de las primeras 5 horas, es violación
                     if not took_break:
                         violations.append({
                             "Employee #": shift["Employee #"],
