@@ -105,7 +105,9 @@ if uploaded_file is not None:
 
                 # Revisamos si hubo un "OUT On Break" antes de las 5 horas
                 for _, row in group.iterrows():
-                    if "(Break)" in row["Salida"]:
+                    salida_str = str(row["Salida"])  # Convertimos Salida a string para evitar el error
+                    
+                    if "(Break)" in row["Salida"].strftime("%I:%M %p"):  # Buscamos "(Break)" en la hora
                         break_time = row["Salida"]
                         break_duration = (break_time - first_entry).total_seconds() / 3600
                         
