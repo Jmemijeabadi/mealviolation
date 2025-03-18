@@ -71,7 +71,7 @@ if uploaded_file is not None:
                         entry_time = None
                         entry_date = None
 
-                    except:
+                 
                         continue
 
             return records
