@@ -21,23 +21,22 @@ def parse_time_records(records):
     current_employee = None
     
     for i in range(len(records)):
-        line = records[i]
-        employee_match = re.match(r'(\d{3,4}) - ([A-Z ]+)', line)
+        line = records[i].strip()
+        
+        employee_match = re.match(r'(\d{3,4}) - ([A-Za-z ]+)', line)
         if employee_match:
             current_employee = employee_match.group(2).strip()
             employee_data[current_employee] = []
             continue
         
-        if 'IN' in line or 'OUT' in line:
-            time_match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
-            if current_employee and time_match:
-                entry = (time_match.group(1), time_match.group(2))
-                employee_data[current_employee].append(entry)
+        time_match = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
+        if current_employee and time_match:
+            employee_data[current_employee].extend(time_match)
     
     return employee_data
 
 def detect_meal_violations(employee_data):
-    """Detecta violaciones de descanso según las reglas establecidas."""
+    """Detecta violaciones de Meal Break."""
     violations = []
     
     for employee, records in employee_data.items():
@@ -62,7 +61,7 @@ def detect_meal_violations(employee_data):
 
 # Interfaz en Streamlit
 st.title('Detección de Meal Violations')
-st.write("Sube un archivo PDF con registros de empleados para detectar violaciones de descanso.")
+st.write("Sube un archivo PDF con registros de empleados para detectar violaciones de Meal Break.")
 
 uploaded_file = st.file_uploader("Sube el archivo PDF", type=["pdf"])
 
@@ -71,7 +70,7 @@ if uploaded_file:
     employee_data = parse_time_records(records)
     violations_df = detect_meal_violations(employee_data)
     
-    st.write("### Resultados de Violaciones de Descanso")
+    st.write("### Resultados de Violaciones de Meal Break")
     if not violations_df.empty:
         st.dataframe(violations_df)
         
