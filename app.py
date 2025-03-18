@@ -2,13 +2,13 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 import re
+from datetime import datetime
 
 # Función para extraer datos de empleados y tiempos
-
 def extract_time_records(pdf_text):
-    employee_pattern = re.compile(r"(?P<employee_id>\d{4,7}) - (?P<employee_name>[A-Z\s-]+)")
+    employee_pattern = re.compile(r"(?P<employee_id>\d{4,7}) - (?P<employee_name>[A-Za-z\s-']+)")
     time_pattern = re.compile(
-        r"(\d+ - [A-Z\s-]+)\s+IN\s+(\w{3})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)\s+(On Time|Early)"
+        r"(\d+ - [A-Za-z\s-']+)\s+IN\s+(\w{3})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)\s+(On Time|Early|Late)"
     )
 
     employees = {}
@@ -33,6 +33,7 @@ def extract_time_records(pdf_text):
                     "clock_in": time_match.group(4),
                     "status": time_match.group(5)
                 })
+
     return pd.DataFrame(time_records)
 
 # Aplicación en Streamlit
@@ -42,17 +43,24 @@ uploaded_file = st.file_uploader("Sube un archivo PDF de registros de tiempo", t
 
 if uploaded_file:
     with pdfplumber.open(uploaded_file) as pdf:
-        pdf_text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+        pdf_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
         df_records = extract_time_records(pdf_text)
-    
-    st.subheader("Registros de Tiempo Extraídos")
-    st.dataframe(df_records)
 
-    # Identificar Meal Violations
-    violations = df_records.groupby("employee_id").filter(
-        lambda x: (x["clock_in"].apply(lambda t: int(t.split(":")[0]) >= 5).any())
-    )
-    violations["violation"] = True
+    if df_records.empty:
+        st.warning("No se encontraron registros en el PDF. Verifica el formato del archivo.")
+    else:
+        st.subheader("Registros de Tiempo Extraídos")
+        st.dataframe(df_records)
 
-    st.subheader("Meal Violations Detectadas")
-    st.dataframe(violations)
+        # Convertir horas a formato datetime para mejor análisis
+        df_records["clock_in_time"] = pd.to_datetime(df_records["clock_in"], format="%I:%M%p")
+
+        # Identificar Meal Violations (ejemplo: empleados que marcaron entrada después de las 5 PM)
+        violations = df_records[df_records["clock_in_time"].dt.hour >= 17]
+        violations["violation"] = True
+
+        if violations.empty:
+            st.success("No se detectaron Meal Violations.")
+        else:
+            st.subheader("Meal Violations Detectadas")
+            st.dataframe(violations)
