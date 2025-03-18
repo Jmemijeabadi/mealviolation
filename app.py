@@ -22,63 +22,60 @@ if uploaded_file is not None:
 
         st.write("✅ **Texto extraído correctamente. Ahora procesando horarios...**")
 
-        # Función para extraer horarios
+        # Función para extraer horarios de los empleados
         def extract_shifts(lines):
             records = []
-            current_employee = None
             current_employee_id = None
-            shifts = {}
+            current_employee = None
+            entry_time = None
+            entry_date_str = None
 
             for i in range(len(lines) - 4):
-                line = lines[i]
+                line = lines[i].strip()
 
-                # Detectar el número y nombre del empleado
-                employee_match = re.match(r"(\d{6,}) - (.+)", line)
-                if employee_match:
-                    current_employee_id = employee_match.group(1).strip()
-                    current_employee = employee_match.group(2).strip()
-                    continue  # Pasar a la siguiente línea
+                # Detectar el número de empleado y el nombre
+                if re.match(r"\d{5,}", line) and "-" in lines[i + 1]:
+                    current_employee_id = line.strip() + lines[i + 1].split("-")[0].strip()
+                    current_employee = lines[i + 1].split("-")[1].strip()
+                    continue
 
-                # Detectar entradas ("IN")
-                if line == "IN" and lines[i + 1] == "On Time":
+                # Detectar entradas ("IN On Time")
+                if line == "IN" and "On Time" in lines[i + 1]:
                     try:
-                        entry_time_str = lines[i + 3]  # Hora de entrada
-                        entry_date = lines[i + 4]  # Fecha
-                        entry_time = datetime.strptime(f"{entry_date} {entry_time_str}", "%m/%d/%Y %I:%M%p")
-                        
-                        # Guardar turno en una lista temporal
-                        shifts.setdefault((current_employee_id, entry_date), []).append({
+                        entry_time_str = lines[i + 2].strip()  # Hora de entrada
+                        if not re.search(r"\d{1,2}:\d{2}[ap]m", entry_time_str):
+                            entry_time_str = lines[i + 3].strip()  # Ajustar si la línea siguiente es incorrecta
+                        entry_date_str = lines[i + 4].strip()  # Fecha de entrada
+                        entry_time = datetime.strptime(f"{entry_date_str} {entry_time_str}", "%m/%d/%Y %I:%M%p")
+                    except:
+                        entry_time = None  # Reiniciar en caso de error
+
+                # Detectar salidas ("OUT On Time") asociadas a una entrada previa
+                if line == "OUT" and entry_time and current_employee_id:
+                    try:
+                        exit_time_str = lines[i + 2].strip()  # Hora de salida
+                        if not re.search(r"\d{1,2}:\d{2}[ap]m", exit_time_str):
+                            exit_time_str = lines[i + 3].strip()  # Ajustar si la línea siguiente es incorrecta
+                        exit_time = datetime.strptime(f"{entry_date_str} {exit_time_str}", "%m/%d/%Y %I:%M%p")
+
+                        # Calcular horas trabajadas
+                        hours_worked = (exit_time - entry_time).total_seconds() / 3600
+
+                        # Agregar registro con Employee # y Empleado correctos
+                        records.append({
+                            "Employee #": current_employee_id,
                             "Empleado": current_employee,
-                            "Entrada": entry_time
+                            "Fecha": entry_date_str,
+                            "Entrada": entry_time.strftime("%I:%M %p"),
+                            "Salida": exit_time.strftime("%I:%M %p"),
+                            "Horas Trabajadas": round(hours_worked, 2)
                         })
 
-                    except Exception as e:
-                        st.warning(f"⚠ Error procesando entrada de {current_employee}: {e}")
-
-                # Detectar salidas ("OUT") asociadas a una entrada previa
-                if line == "OUT":
-                    try:
-                        exit_time_str = lines[i + 3]  # Hora de salida
-                        exit_time = datetime.strptime(f"{entry_date} {exit_time_str}", "%m/%d/%Y %I:%M%p")
-                        
-                        # Si hay entrada previa en el mismo día, asociar con la salida
-                        if (current_employee_id, entry_date) in shifts:
-                            for shift in shifts[(current_employee_id, entry_date)]:
-                                if "Salida" not in shift:
-                                    shift["Salida"] = exit_time
-                                    shift["Horas Trabajadas"] = (exit_time - shift["Entrada"]).total_seconds() / 3600
-                                    records.append({
-                                        "Employee #": current_employee_id,
-                                        "Empleado": shift["Empleado"],
-                                        "Fecha": entry_date,
-                                        "Entrada": shift["Entrada"].strftime("%I:%M %p"),
-                                        "Salida": shift["Salida"].strftime("%I:%M %p"),
-                                        "Horas Trabajadas": shift["Horas Trabajadas"]
-                                    })
-                                    break  # Asociar solo una salida por entrada
-
-                    except Exception as e:
-                        st.warning(f"⚠ Error procesando salida de {current_employee}: {e}")
+                        # Reiniciar valores después de registrar un turno
+                        entry_time = None
+                        entry_date_str = None
+                    except:
+                        continue
 
             return records
 
@@ -119,7 +116,7 @@ if uploaded_file is not None:
 
             return violations
 
-        # Procesar horarios
+        # Extraer los turnos de los empleados
         shifts = extract_shifts(lines)
         shifts_df = pd.DataFrame(shifts)
 
