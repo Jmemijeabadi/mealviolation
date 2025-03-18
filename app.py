@@ -21,7 +21,7 @@ def parse_time_records(records):
     current_employee = None
     
     for line in records:
-        employee_match = re.match(r'(\d{4}) - ([A-Z ]+)', line)
+        employee_match = re.match(r'(\d{3,4}) - ([A-Z ]+)', line)
         if employee_match:
             current_employee = employee_match.group(2).strip()
             employee_data[current_employee] = []
@@ -49,7 +49,7 @@ def detect_meal_violations(employee_data):
                     for i in range(1, len(shifts)):
                         break_time = datetime.strptime(shifts[i][0] + ' ' + shifts[i][1], "%m/%d/%Y %I:%M%p")
                         break_duration = (break_time - clock_in).total_seconds() / 3600
-                        if 0.5 <= break_duration <= 5:
+                        if 0.5 <= (clock_out - break_time).total_seconds() / 3600 and break_duration <= 5:
                             took_break = True
                             break
                     
