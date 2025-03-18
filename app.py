@@ -19,19 +19,26 @@ def parse_time_records(records):
     """Parses registros de tiempo para estructurar la información."""
     employee_data = {}
     current_employee = None
+    current_shift = []
     
-    for i in range(len(records)):
-        line = records[i].strip()
+    for line in records:
+        line = line.strip()
         
         employee_match = re.match(r'(\d{3,4}) - ([A-Za-z ]+)', line)
         if employee_match:
+            if current_employee and current_shift:
+                employee_data[current_employee].append(current_shift)
             current_employee = employee_match.group(2).strip()
             employee_data[current_employee] = []
+            current_shift = []
             continue
         
         time_match = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
         if current_employee and time_match:
-            employee_data[current_employee].append([(date, time) for date, time in time_match])
+            current_shift.extend([(date, time) for date, time in time_match])
+    
+    if current_employee and current_shift:
+        employee_data[current_employee].append(current_shift)
     
     return employee_data
 
@@ -51,8 +58,9 @@ def detect_meal_violations(employee_data):
                     for i in range(1, len(shift) - 1):
                         break_time = datetime.strptime(shift[i][0] + ' ' + shift[i][1], "%m/%d/%Y %I:%M%p")
                         break_duration = (break_time - clock_in).total_seconds() / 3600
+                        rest_period = (clock_out - break_time).total_seconds() / 3600
                         
-                        if break_duration <= 5 and (clock_out - break_time).total_seconds() / 3600 >= 0.5:
+                        if break_duration <= 5 and rest_period >= 0.5:
                             took_valid_break = True
                             break
                     
