@@ -29,16 +29,17 @@ def parse_time_records(records):
             if current_employee and current_shift:
                 employee_data[current_employee].append(current_shift)
             current_employee = employee_match.group(2).strip()
-            employee_data[current_employee] = []
+            employee_data.setdefault(current_employee, [])
             current_shift = []
             continue
         
         time_match = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
         if current_employee and time_match:
             current_shift.extend([(date, time) for date, time in time_match])
-    
-    if current_employee and current_shift:
-        employee_data[current_employee].append(current_shift)
+        
+        if 'OUT' in line and current_shift:
+            employee_data[current_employee].append(current_shift)
+            current_shift = []
     
     return employee_data
 
