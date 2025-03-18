@@ -1,96 +1,83 @@
 import streamlit as st
-import pdfplumber
 import pandas as pd
+import pdfplumber
 import re
+from io import StringIO
 
-# Función para extraer datos de empleados y tiempos
-def extract_time_records(pdf_text):
-    employee_pattern = re.compile(r"(?P<employee_id>\d{4,7}) - (?P<employee_name>[A-Z\s-]+)")
-    time_pattern = re.compile(
-        r"(\d+ - [A-Z\s-]+)\s+IN\s+(\w{3})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)\s+(On Time|Early|On Break)"
-    )
+def extract_data_from_pdf(pdf_file):
+    """Extrae los registros de tiempo de los empleados desde un archivo PDF."""
+    records = []
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                lines = text.split('\n')
+                for line in lines:
+                    match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
+                    if match:
+                        records.append(line)
+    return records
 
-    time_records = []
-    current_employee_id = None
-    current_employee_name = None
-
-    for line in pdf_text.split("\n"):
-        emp_match = employee_pattern.search(line)
-        if emp_match:
-            current_employee_id = emp_match.group("employee_id")
-            current_employee_name = emp_match.group("employee_name")
-        elif "IN " in line and current_employee_id:
-            time_match = time_pattern.search(line)
-            if time_match:
-                time_records.append({
-                    "employee_id": current_employee_id,
-                    "employee_name": current_employee_name,
-                    "job": time_match.group(1),
-                    "day": time_match.group(2),
-                    "date": time_match.group(3),
-                    "clock_in": time_match.group(4),
-                    "status": time_match.group(5)
-                })
+def parse_time_records(records):
+    """Parses registros de tiempo para estructurar la información."""
+    employee_data = {}
+    current_employee = None
     
-    return pd.DataFrame(time_records)
+    for line in records:
+        if re.search(r'Employee Time Card And Job Detail', line):
+            current_employee = None
+        
+        match = re.search(r'(\d{4}) - ([A-Z ]+)', line)
+        if match:
+            current_employee = match.group(2).strip()
+            employee_data[current_employee] = []
+            continue
+        
+        time_match = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
+        if current_employee and time_match:
+            employee_data[current_employee].append(time_match)
+    
+    return employee_data
 
-# Función para convertir horas a formato 24h y manejar errores
-def convert_to_24h(time_str):
-    try:
-        time_match = re.match(r"(\d{1,2}):(\d{2})([ap]m)", time_str)
-        if time_match:
-            hour, minute, period = int(time_match.group(1)), int(time_match.group(2)), time_match.group(3)
-            if period == "pm" and hour != 12:
-                hour += 12  # Convertir PM a 24h
-            elif period == "am" and hour == 12:
-                hour = 0  # Convertir 12 AM a 0 horas
-            return hour + (minute / 60)  # Convertir a decimal
-    except:
-        return None  # Si hay un error, devuelve None
+def detect_meal_violations(employee_data):
+    """Detecta violaciones de descanso según las reglas establecidas."""
+    violations = []
+    for employee, records in employee_data.items():
+        for record in records:
+            if len(record) >= 2:
+                clock_in = pd.to_datetime(record[0][0] + ' ' + record[0][1])
+                clock_out = pd.to_datetime(record[-1][0] + ' ' + record[-1][1])
+                work_duration = (clock_out - clock_in).total_seconds() / 3600
+                
+                if work_duration > 6:
+                    took_break = False
+                    for i in range(1, len(record)):
+                        break_time = pd.to_datetime(record[i][0] + ' ' + record[i][1])
+                        if (break_time - clock_in).total_seconds() / 3600 <= 5:
+                            took_break = True
+                            break
+                    
+                    if not took_break:
+                        violations.append((employee, clock_in, clock_out, work_duration))
+    
+    return pd.DataFrame(violations, columns=['Empleado', 'Hora de Entrada', 'Hora de Salida', 'Horas Trabajadas'])
 
-# Aplicación en Streamlit
-st.title("Meal Violation Detector")
+# Interfaz en Streamlit
+st.title('Detección de Meal Violations')
+st.write("Sube un archivo PDF con registros de empleados para detectar violaciones de descanso.")
 
-uploaded_file = st.file_uploader("Sube un archivo PDF de registros de tiempo", type=["pdf"])
+uploaded_file = st.file_uploader("Sube el archivo PDF", type=["pdf"])
 
 if uploaded_file:
-    with pdfplumber.open(uploaded_file) as pdf:
-        pdf_text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text() is not None])
-        df_records = extract_time_records(pdf_text)
+    records = extract_data_from_pdf(uploaded_file)
+    employee_data = parse_time_records(records)
+    violations_df = detect_meal_violations(employee_data)
     
-    if df_records.empty:
-        st.warning("No se encontraron registros en el archivo PDF.")
+    st.write("### Resultados de Violaciones de Descanso")
+    if not violations_df.empty:
+        st.dataframe(violations_df)
+        
+        csv = violations_df.to_csv(index=False).encode('utf-8')
+        st.download_button("Descargar reporte en CSV", csv, "meal_violations.csv", "text/csv")
     else:
-        st.subheader("Registros de Tiempo Extraídos")
-        st.dataframe(df_records)
-
-        # Convertir la columna "clock_in" a formato 24h
-        df_records["clock_in_24h"] = df_records["clock_in"].apply(convert_to_24h)
-
-        # Manejar errores en la conversión
-        df_records = df_records.dropna(subset=["clock_in_24h"])
-
-        # Agrupar por empleado y fecha para analizar violaciones
-        violations = []
-        for (employee_id, date), group in df_records.groupby(["employee_id", "date"]):
-            group = group.sort_values(by="clock_in_24h")  # Ordenar registros por hora de entrada
-            first_entry = group.iloc[0]  # Primera entrada del día
-            first_entry_time = first_entry["clock_in_24h"]
-
-            # Filtrar los registros con estado "On Break"
-            on_break_records = group[group["status"] == "On Break"]
-
-            # Revisar si algún descanso ocurrió después de la quinta hora de trabajo
-            for _, break_record in on_break_records.iterrows():
-                break_time = break_record["clock_in_24h"]
-                if break_time - first_entry_time > 5:
-                    violations.append(break_record)
-
-        # Crear DataFrame con violaciones
-        violations_df = pd.DataFrame(violations)
-
-        st.subheader("Meal Violations Detectadas")
-        if violations_df.empty:
-            st.success("No se encontraron Meal Violations.")
-        else:
-            st.dataframe(violations_df)
+        st.write("No se detectaron violaciones de Meal Break.")
