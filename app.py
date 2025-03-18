@@ -34,7 +34,7 @@ def parse_time_logs_with_fixed_employee_names(text):
 def detect_meal_violations(df):
     violations = []
 
-    for employee, group in df.groupby("Employee"):
+    for employee, group in df.groupby(["Employee", "Date"]):
         group = group.sort_values(by="Datetime").reset_index(drop=True)
         shift_start = None
         shift_end = None
@@ -45,7 +45,9 @@ def detect_meal_violations(df):
                 if shift_start is None:
                     shift_start = row["Datetime"]
                 shift_end = row["Datetime"]
-
+            elif row["Direction"] == "OUT":
+                shift_end = row["Datetime"]
+            
             if "On Break" in row["Status"] or "Break" in row["Status"]:
                 breaks.append(row["Datetime"])
 
@@ -58,9 +60,9 @@ def detect_meal_violations(df):
                     for b in breaks
                 )
                 
-                if not took_break or not breaks:
+                if not took_break:
                     violations.append(
-                        [employee, shift_start.date(), shift_start.time(), shift_end.time(), "Meal Violation"]
+                        [employee[0], employee[1], shift_start.time(), shift_end.time(), "Meal Violation"]
                     )
     
     return pd.DataFrame(violations, columns=["Employee", "Date", "Shift Start", "Shift End", "Violation"])
@@ -73,7 +75,6 @@ if uploaded_file is not None:
     text = extract_text_from_pdf(uploaded_file)
     df_logs = parse_time_logs_with_fixed_employee_names(text)
     
-    # Validar si las columnas necesarias tienen datos válidos
     if not df_logs.empty and "Date" in df_logs.columns and "Time" in df_logs.columns:
         try:
             df_logs["Datetime"] = pd.to_datetime(df_logs["Date"] + " " + df_logs["Time"], errors='coerce')
