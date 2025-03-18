@@ -19,9 +19,10 @@ def parse_time_records(records):
     """Parses registros de tiempo para estructurar la información."""
     employee_data = {}
     current_employee = None
+    current_date = None
     
-    for i in range(len(records)):
-        line = records[i].strip()
+    for line in records:
+        line = line.strip()
         
         employee_match = re.match(r'(\d{3,4}) - ([A-Za-z ]+)', line)
         if employee_match:
@@ -29,9 +30,14 @@ def parse_time_records(records):
             employee_data[current_employee] = []
             continue
         
-        time_match = re.findall(r'(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)', line)
-        if current_employee and time_match:
-            employee_data[current_employee].extend(time_match)
+        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', line)
+        if date_match:
+            current_date = date_match.group(1)
+        
+        time_match = re.findall(r'(\d{1,2}:\d{2}[ap]m)', line)
+        if current_employee and current_date and time_match:
+            for time in time_match:
+                employee_data[current_employee].append((current_date, time))
     
     return employee_data
 
