@@ -66,10 +66,10 @@ def check_meal_violation(df):
             entrada_principal = datetime.strptime(group.iloc[0]["Hora Entrada"], fmt)
             quinta_hora = entrada_principal + timedelta(hours=5)
             
-            descansos = group[group["Horas trabajadas"] < 6]
+            descansos = group[(group["Horas trabajadas"] < 6) & (group["Hora Entrada"] != group.iloc[0]["Hora Entrada"])]
             descanso_tomado = any(
                 (datetime.strptime(row["Hora Entrada"], fmt) > entrada_principal) and
-                (datetime.strptime(row["Hora Entrada"], fmt) <= quinta_hora)
+                (datetime.strptime(row["Hora Entrada"], fmt) < quinta_hora)
                 for _, row in descansos.iterrows()
             )
             
