@@ -79,7 +79,7 @@ def main():
         st.write("Analizando el documento...")
         
         text = extract_text_from_pdf(uploaded_file)
-        st.text_area("Vista previa del texto extraído", text[:2000])  # Muestra los primeros 2000 caracteres
+        st.text_area("Vista previa del texto extraído", text[:5000])  # Muestra los primeros 5000 caracteres para mejor análisis
         
         structured_sessions = process_work_sessions(text)
         
@@ -88,6 +88,23 @@ def main():
         structured_df = pd.DataFrame([{ "Employee #": emp[0], "Employee Name": emp[1], "Date": date, "Records": str(records) }
                                       for emp, data in structured_sessions.items() for date, records in data.items()])
         st.dataframe(structured_df)
+        
+        # Mostrar los registros exactos de entrada/salida detectados
+        st.subheader("Registros de entrada/salida capturados")
+        raw_data = []
+        for (emp_id, emp_name), work_data in structured_sessions.items():
+            for date, records in work_data.items():
+                for record in records:
+                    raw_data.append({
+                        "Employee #": emp_id,
+                        "Employee Name": emp_name,
+                        "Date": date,
+                        "Status": record[0],
+                        "Time": record[1],
+                        "Is Break": record[2]
+                    })
+        raw_df = pd.DataFrame(raw_data)
+        st.dataframe(raw_df)
         
         violations_df = detect_meal_violations(structured_sessions)
         
