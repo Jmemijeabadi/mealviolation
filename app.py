@@ -79,7 +79,12 @@ def main():
         st.write("Analizando el documento...")
         
         text = extract_text_from_pdf(uploaded_file)
-        st.text_area("Vista previa del texto extraído", text[:5000])  # Muestra los primeros 5000 caracteres para mejor análisis
+        st.text_area("Vista previa del texto extraído", text[:10000])  # Muestra los primeros 10000 caracteres
+        
+        # Mostrar todas las líneas que contienen "IN" o "OUT" para verificar el formato
+        st.subheader("Registros de entrada y salida identificados")
+        in_out_lines = [line for line in text.split("\n") if "IN" in line or "OUT" in line]
+        st.text_area("Líneas con IN/OUT detectadas", "\n".join(in_out_lines[:200]))
         
         structured_sessions = process_work_sessions(text)
         
