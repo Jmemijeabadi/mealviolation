@@ -1,11 +1,13 @@
 import streamlit as st
-import json
 import pdfplumber
 import re
+import json
 
 def extract_data_from_pdf(pdf_path):
-    data = []
+    employees = []
     current_employee = None
+    employee_pattern = re.compile(r"(\d{4,}) - (.+)")
+    entry_pattern = re.compile(r"(\d{3} - [A-Z\s-]+)\s+(IN|OUT)\s+(\w{3})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)\s*(\d*\.\d*)?\s*(.+)?")
     
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
@@ -15,39 +17,44 @@ def extract_data_from_pdf(pdf_path):
             
             lines = text.split("\n")
             for line in lines:
-                # Detectar empleados
-                employee_match = re.match(r"(\d{4,}) - (.+)", line)
+                employee_match = employee_pattern.match(line)
                 if employee_match:
                     if current_employee:
-                        data.append(current_employee)
+                        employees.append(current_employee)
                     current_employee = {
-                        "id": employee_match.group(1),
+                        "employee_id": employee_match.group(1),
                         "name": employee_match.group(2),
                         "time_cards": []
                     }
                     continue
                 
-                # Detectar registros de entrada y salida
-                time_match = re.match(r"(\w{3})\s+(IN|OUT)\s+(.+?)\s+(\d{1,2}:\d{2}[ap]m)\s+(\d{1,2}/\d{1,2}/\d{4})\s*(\d*\.\d*)?", line)
+                time_match = entry_pattern.match(line)
                 if time_match and current_employee:
-                    date = time_match.group(5)
+                    job = time_match.group(1).strip()
                     status = time_match.group(2)
-                    job = time_match.group(3).strip()
-                    time = time_match.group(4)
+                    day = time_match.group(3)
+                    date = time_match.group(4)
+                    time = time_match.group(5)
                     hours = float(time_match.group(6)) if time_match.group(6) else None
+                    reason = time_match.group(7).strip() if time_match.group(7) else ""
                     
-                    # Buscar si ya hay una entrada para ese día y ese trabajo
                     existing_entry = next((entry for entry in current_employee["time_cards"] if entry["date"] == date and entry["job"] == job), None)
                     if not existing_entry:
                         existing_entry = {"date": date, "job": job, "entries": []}
                         current_employee["time_cards"].append(existing_entry)
                     
-                    existing_entry["entries"].append({"time": time, "status": status, "hours": hours})
+                    existing_entry["entries"].append({
+                        "day": day,
+                        "time": time,
+                        "status": status,
+                        "hours": hours,
+                        "reason": reason
+                    })
     
     if current_employee:
-        data.append(current_employee)
+        employees.append(current_employee)
     
-    return {"employees": data}
+    return {"employees": employees}
 
 def main():
     st.title("Employee Time Card Analyzer")
