@@ -89,5 +89,8 @@ if uploaded_file is not None:
     df = process_data(text)
     df = check_meal_violation(df)
     
-    st.write("### Resultados")
-    st.dataframe(df)
+    # Filtrar solo las violaciones de comida
+    df_violations = df[df["Meal Violation"] == "Sí"]
+    
+    st.write("### Resultados (Solo con Violaciones de Comida)")
+    st.dataframe(df_violations)
