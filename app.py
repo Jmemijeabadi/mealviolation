@@ -1,244 +1,96 @@
 import streamlit as st
+import pandas as pd
 import pdfplumber
 import re
-import pandas as pd
-from datetime import datetime
-from collections import defaultdict
+from datetime import datetime, timedelta
 
-def main():
-    st.title("Análisis de Asistencia (Meal Breaks) - Detallado")
+# Función para extraer texto del PDF
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+    return text
 
-    pdf_file = st.file_uploader("Cargar archivo PDF", type=["pdf"])
+# Función para procesar datos extraídos
+def process_data(text):
+    records = []
+    lines = text.split("\n")
+    current_employee = None
     
-    if pdf_file is not None:
-        with pdfplumber.open(pdf_file) as pdf:
-            texto_completo = ""
-            for page in pdf.pages:
-                texto_completo += page.extract_text() + "\n"
-        
-        # Procesar texto para extraer marcajes (IN/OUT) de manera detallada
-        registros_eventos = extraer_eventos(texto_completo)
-        
-        if not registros_eventos:
-            st.warning("No se detectaron eventos IN/OUT en el PDF.")
-            return
-        
-        # Convertimos la lista de eventos a un DataFrame
-        df_eventos = pd.DataFrame(registros_eventos)
-        
-        # Analizamos día por día para cada empleado
-        df_resultado = analizar_asistencia_detallada(df_eventos)
-        
-        st.subheader("Resultado:")
-        st.dataframe(df_resultado)
+    for i, line in enumerate(lines):
+        emp_match = re.match(r"(\d{4}) - ([A-Za-z ]+)", line)
+        if emp_match:
+            current_employee = emp_match.groups()
 
-def extraer_eventos(texto):
-    """
-    Devuelve una lista de diccionarios, donde cada dict representa un evento:
-    {
-      'employee_id': '1054',
-      'nombre': 'Cristal Cervantes',
-      'evento': 'IN Not Scheduled' o 'OUT On Break' etc.,
-      'datetime': datetime(2025, 2, 22, 7, 51),
-      'fecha_str': '2/22/2025',
-      'hora_str': '7:51am'
-    }
-    """
-    
-    # Patrón para encontrar la línea de "Employee # y Nombre":  <numero> - <nombre>
-    patron_empleado = re.compile(r"^(\d+)\s*-\s*(.+)$")
-    
-    # Patrón para eventos (IN/OUT), intentando capturar algo como:
-    #   "SatIN Not Scheduled200 - CASHIER 7:51am2/22/2025"
-    #   "OUT On Break 0.79 8:38am"
-    # Observamos que la hora en 12h viene en el form "7:51am" o "12:30pm".
-    # Y la fecha en "2/22/2025".
-    # También notamos que "IN Not Scheduled" / "OUT On Break" / "OUT Not Scheduled" etc.
-    # es la parte que define el tipo de evento.
-    
-    # Haremos 2 búsquedas en la misma línea: 
-    # 1) Para ver si es una línea de "IN" o "OUT"
-    # 2) Para extraer la hora y fecha
-    
-    # Expresión para detectar un tag "IN algo" o "OUT algo":
-    patron_in_out = re.compile(r"(IN\s+[A-Za-z\s]*)|(OUT\s+[A-Za-z\s]*)")
-    # Expresión para hora: (\d{1,2}:\d{2}(am|pm))
-    patron_hora = re.compile(r"(\d{1,2}:\d{2}(?:am|pm))")
-    # Expresión para fecha: (\d+/\d+/\d+)
-    patron_fecha = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})")
-    
-    eventos = []
-    
-    empleado_actual = None
-    nombre_actual = None
-    
-    for linea in texto.split("\n"):
-        linea = linea.strip()
-        if not linea:
-            continue
-        
-        # 1) Checar si la línea define un nuevo empleado
-        m_emp = patron_empleado.search(linea)
-        if m_emp:
-            empleado_actual = m_emp.group(1).strip()
-            nombre_actual = m_emp.group(2).strip()
-            continue
-        
-        if empleado_actual is None:
-            # Todavía no hemos visto un "ID - Nombre", ignoramos
-            continue
-        
-        # 2) Buscar si la línea contiene un evento IN/OUT
-        m_in_out = patron_in_out.search(linea)
-        if not m_in_out:
-            # No hay "IN" ni "OUT", pasamos
-            continue
-        
-        # Determinar el string exacto: "IN Not Scheduled", "OUT On Break", etc.
-        evento_str = m_in_out.group(0)  # Ej: "OUT On Break", "IN Not Scheduled", etc.
-        evento_str = evento_str.strip()
-        
-        # 3) Buscar la hora
-        m_hora = patron_hora.findall(linea)
-        if not m_hora:
-            # No hay hora en la línea, no podemos registrar un evento
-            continue
-        # Tomamos la última (o la primera) si hubiera más de una
-        hora_str = m_hora[-1][0]  # m_hora es una lista de tuplas capturadas con groups, tomamos el primer group
-        # hora_str algo como "7:51am"
-        
-        # 4) Buscar la fecha
-        m_fecha = patron_fecha.findall(linea)
-        if not m_fecha:
-            # No hay fecha, no podemos registrar
-            continue
-        fecha_str = m_fecha[-1]  # Tomamos la última coincidencia
-        
-        # 5) Convertir hora_str + fecha_str a datetime
-        #    Formato: "m/d/yyyy" + "hh:mm(am|pm)"
-        try:
-            # Normalizamos "7:51am" en datetime
-            dt = datetime.strptime(fecha_str + " " + hora_str, "%m/%d/%Y %I:%M%p")
-        except ValueError:
-            # Si falla, continuamos
-            continue
-        
-        # 6) Guardamos el evento
-        evento = {
-            "employee_id": empleado_actual,
-            "nombre": nombre_actual,
-            "evento": evento_str,             # p.ej. "OUT On Break"
-            "datetime": dt,
-            "fecha_str": fecha_str,
-            "hora_str": hora_str
-        }
-        eventos.append(evento)
-    
-    return eventos
-
-def analizar_asistencia_detallada(df_eventos):
-    """
-    Toma el DataFrame de eventos con columnas:
-      - employee_id
-      - nombre
-      - evento (ej. 'IN Not Scheduled', 'OUT On Break', etc.)
-      - datetime
-      - fecha_str
-      - hora_str
-    
-    Retorna un DataFrame con:
-      - Employee #
-      - Nombre
-      - Fecha
-      - Horas trabajadas (total del día)
-      - Meal Violation (Sí / No)
-    
-    La lógica:
-      - Se agrupa por (employee_id, fecha_str)
-      - Se ordena por datetime
-      - Se calculan las horas totales (sumando IN -> OUT)
-      - Detectamos si hubo un break antes de la 5.ª hora
-        (Al primer "OUT On Break", vemos cuántas horas se llevaban).
-      - Si total > 6 y no break o break tardío => "Sí"
-    """
-    # Ordenar primero
-    df_eventos = df_eventos.sort_values(by=["employee_id", "fecha_str", "datetime"])
-    
-    resultados = []
-    
-    for (emp_id, fecha), grupo in df_eventos.groupby(["employee_id", "fecha_str"]):
-        grupo = grupo.sort_values(by="datetime")
-        
-        nombre = grupo["nombre"].iloc[0]
-        
-        # Para calcular horas reales:
-        # Recorremos cada evento y formamos pares IN->OUT. 
-        # Ejemplo simple: 
-        #   [ (datetime_in1, 'IN ...'), (datetime_out1, 'OUT ...'), (datetime_in2, ...), ... ]
-        
-        # 'tiempo_total_trabajado' en horas
-        tiempo_total_trabajado = 0.0
-        
-        # ¿Hubo break antes de la 5.ª hora? 
-        #   Guardaremos la marca en una var booleana
-        hubo_break_antes_5 = False
-        
-        ultimo_in = None  # datetime de la última entrada
-        horas_acumuladas_en_turno = 0.0  # cuántas horas llevaba el empleado en el día, para ver si un break fue < 5
-        
-        for idx, row in grupo.iterrows():
-            evento = row["evento"]
-            dt = row["datetime"]
+        if "IN" in line and current_employee:
+            date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", line)
+            time_in_match = re.search(r"(\d{1,2}:\d{2}[ap]m)", line)
             
-            if evento.startswith("IN"):
-                # Marca de entrada
-                # Cerramos un posible IN anterior? (Depende de si se repite)
-                # Para simplificar, cuando vemos un IN, guardamos ese dt para medir un OUT posterior
-                ultimo_in = dt
-            
-            elif evento.startswith("OUT"):
-                # Marca de salida
-                if ultimo_in is not None:
-                    # Calculamos la diferencia
-                    delta = dt - ultimo_in
-                    horas = delta.total_seconds() / 3600.0
-                    # Sumamos al "tiempo_total_trabajado"
-                    tiempo_total_trabajado += horas
-                    # También al "horas_acumuladas_en_turno"
-                    horas_acumuladas_en_turno += horas
-                    
-                    # Si es un OUT On Break, revisamos si horas_acumuladas_en_turno < 5
-                    if "On Break" in evento:
-                        if horas_acumuladas_en_turno < 5:
-                            hubo_break_antes_5 = True
-                    
-                    # Cerramos ese IN
-                    ultimo_in = None
-                else:
-                    # OUT sin IN previo... en la práctica pasa con "FORGOT CLOCK-IN"
-                    # lo podrías ignorar o manejar distinto
-                    pass
-        
-        # Al final del día, 'tiempo_total_trabajado' es la suma de los intervalos IN->OUT
-        # Revisamos violación:
-        #   - Criterio: Más de 6 horas y (no hubo break o break fue despues de 5 horas)
-        if tiempo_total_trabajado > 6 and not hubo_break_antes_5:
-            meal_violation = "Sí"
-        else:
-            meal_violation = "No"
-        
-        resultados.append({
-            "Employee #": emp_id,
-            "Nombre": nombre,
-            "Fecha": fecha,
-            "Horas trabajadas": round(tiempo_total_trabajado, 2),
-            "Meal Violation": meal_violation
-        })
-    
-    df_resultado = pd.DataFrame(resultados)
-    # Orden final
-    df_resultado = df_resultado.sort_values(["Employee #", "Fecha"]).reset_index(drop=True)
-    return df_resultado
+            if date_match and time_in_match:
+                date = date_match.group(1)
+                time_in = time_in_match.group(1)
 
-if __name__ == "__main__":
-    main()
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    if "OUT" in lines[j]:
+                        time_out_match = re.search(r"(\d{1,2}:\d{2}[ap]m)", lines[j])
+                        hours_match = re.search(r"OUT\s+\d{1,2}:\d{2}[ap]m\s+([\d\.]+)", lines[j])
+                        
+                        if time_out_match and hours_match:
+                            time_out = time_out_match.group(1)
+                            hours_worked = float(hours_match.group(1))
+
+                            records.append({
+                                "Employee #": current_employee[0],
+                                "Nombre": current_employee[1],
+                                "Fecha": date,
+                                "Hora Entrada": time_in,
+                                "Hora Salida": time_out,
+                                "Horas trabajadas": hours_worked
+                            })
+                        break
+    
+    df = pd.DataFrame(records)
+    return df
+
+# Función para evaluar violaciones de comida
+def check_meal_violation(df):
+    meal_violations = []
+    
+    for _, row in df.iterrows():
+        violation = "No"
+        
+        if row["Horas trabajadas"] > 6:
+            fmt = "%I:%M%p"
+            entrada = datetime.strptime(row["Hora Entrada"], fmt)
+            quinta_hora = entrada + timedelta(hours=5)
+
+            descanso_tomado = any(
+                (datetime.strptime(rec["Hora Entrada"], fmt) >= entrada) and
+                (datetime.strptime(rec["Hora Salida"], fmt) <= quinta_hora)
+                for _, rec in df[df["Employee #"] == row["Employee #"]].iterrows()
+            )
+
+            if not descanso_tomado:
+                violation = "Sí"
+        
+        meal_violations.append(violation)
+    
+    df["Meal Violation"] = meal_violations
+    return df
+
+# Streamlit UI
+st.title("Análisis de Violaciones de Comida (Meal Violations)")
+
+uploaded_file = st.file_uploader("Sube el archivo PDF de asistencia", type=["pdf"])
+
+if uploaded_file is not None:
+    with open("temp.pdf", "wb") as f:
+        f.write(uploaded_file.read())
+    
+    text = extract_text_from_pdf("temp.pdf")
+    df = process_data(text)
+    df = check_meal_violation(df)
+    
+    st.write("### Resultados")
+    st.dataframe(df)
