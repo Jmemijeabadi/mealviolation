@@ -9,7 +9,9 @@ def extract_text_from_pdf(pdf_file):
     text = ""
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
-            text += page.extract_text() + "\n"
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
     return text
 
 def process_work_sessions(text):
@@ -26,7 +28,7 @@ def process_work_sessions(text):
             current_employee = (emp_id.strip(), emp_name.strip())
 
         # Identificar registros de entrada, salida y descanso
-        work_match = re.search(r"(IN|OUT) (\w{3} \d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m)(.*Break.*)?", line)
+        work_match = re.search(r"(IN|OUT)\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)(.*Break.*)?", line)
         if work_match and current_employee:
             status, date, time, break_flag = work_match.groups()
             is_break = bool(break_flag)
@@ -79,12 +81,7 @@ def main():
         st.write("Analizando el documento...")
         
         text = extract_text_from_pdf(uploaded_file)
-        st.text_area("Vista previa del texto extraído", text[:10000])  # Muestra los primeros 10000 caracteres
-        
-        # Mostrar todas las líneas que contienen "IN" o "OUT" para verificar el formato
-        st.subheader("Registros de entrada y salida identificados")
-        in_out_lines = [line for line in text.split("\n") if "IN" in line or "OUT" in line]
-        st.text_area("Líneas con IN/OUT detectadas", "\n".join(in_out_lines[:200]))
+        st.text_area("Vista previa del texto extraído", text[:5000])  # Muestra los primeros 5000 caracteres
         
         structured_sessions = process_work_sessions(text)
         
