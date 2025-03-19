@@ -68,14 +68,16 @@ def analyze_time_cards(text):
         A list of dictionaries, where each dictionary represents a Meal Violation.
     """
     violations =
-    employee_pattern = re.compile(r"Employee #\s*(\d+)\s*-\s*(.*):")
+    employee_pattern = re.compile(r"(\d{4})\s*(.*)")
     date_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})")
     time_entry_pattern = re.compile(r"(IN|OUT)\s+(\d{1,2}:\d{2}[ap]m)")
-    
+    break_pattern = re.compile(r"(\d+\.\d{2})0n Break")  #pattern to find "On break"
+
     current_employee = None
     current_date = None
     time_entries =
-
+    total_hours_worked = 0
+    
     lines = text.split('\n')
     for line in lines:
         # Check for Employee and Date
@@ -85,13 +87,14 @@ def analyze_time_cards(text):
                 "id": employee_match.group(1),
                 "name": employee_match.group(2).strip()
             }
-            continue  # Move to the next line
+            continue
 
         date_match = date_pattern.search(line)
         if date_match:
             current_date = date_match.group(1)
             time_entries =# Reset time entries for the new date
-            continue  # Move to the next line
+            total_hours_worked = 0 #reset total hours
+            continue
 
         # Check for Time Entries
         time_entry_matches = list(time_entry_pattern.finditer(line))
@@ -101,10 +104,17 @@ def analyze_time_cards(text):
             entry_time = parse_time(entry_time_str)
             if entry_time:
                 time_entries.append((entry_type, entry_time))
-        
+                
+        #check for "On Break"
+        break_match = break_pattern.search(line)
+        is_break = False
+        if break_match:
+            is_break = True
+            
         # Analyze for Violations after processing time entries
         if current_employee and current_date and time_entries:
-            total_hours_worked = 0
+            
+            
             break_taken = False
             break_start_time = None
             time_at_5_hours = None
@@ -119,10 +129,9 @@ def analyze_time_cards(text):
                     total_hours_worked += hours_worked
                     in_time = None  # Reset in_time after processing the pair
                 
-                # Check for "On Break" in the line
-                if "On Break" in line:
+                # Check for "On Break"
+                if is_break:
                     break_taken = True
-                    # Attempt to capture break start time (Note: This might need refinement based on PDF structure)
                     break_start_time = entry_time
                 
                 # Calculate time at 5 hours (for Condition B)
