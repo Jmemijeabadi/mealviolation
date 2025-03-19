@@ -4,22 +4,31 @@ import PyPDF2
 import re
 
 # Función para extraer datos del PDF
-def extract_data_from_pdf(pdf_path):
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+def extract_data_from_pdf(pdf_file):
+    reader = PyPDF2.PdfReader(pdf_file)
+    text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     return text
 
-# Función para analizar los datos y encontrar violaciones
+# Función para analizar las violaciones de comida
 def analyze_meal_violations(text):
-    pattern = re.compile(r"(\d{4}) - ([A-Z ]+)\n.*?(\d{1,2}/\d{1,2}/\d{4}).*?OUT Not Scheduled\s(\d+\.\d+)", re.DOTALL)
+    pattern = re.compile(r"(\d{4}) - ([A-Z ]+)\n.*?(\d{1,2}/\d{1,2}/\d{4}).*?IN On Time.*?(\d{1,2}:\d{2}[ap]m).*?OUT Not Scheduled\s(\d+\.\d+)", re.DOTALL)
     violations = []
     
     for match in pattern.finditer(text):
-        emp_id, name, date, hours = match.groups()
-        hours = float(hours)
-        if hours > 6:
-            violations.append([emp_id, name.strip(), date, hours, "Meal Violation"])
+        emp_id, name, date, start_time, hours_worked = match.groups()
+        hours_worked = float(hours_worked)
+        
+        if hours_worked > 6:
+            violations.append([emp_id, name.strip(), date, hours_worked, "Meal Violation (No Rest)"])
+        
+        # Verificar si tomó el descanso de 30 minutos antes de la quinta hora
+        break_pattern = re.compile(rf"{date}.*?OUT On Break (\d+\.\d+).*(\d{1,2}:\d{2}[ap]m)")
+        breaks = break_pattern.findall(text)
+        
+        for break_duration, break_time in breaks:
+            if float(break_duration) < 0.5 and "Meal Violation (No 30-min Break)" not in violations:
+                violations.append([emp_id, name.strip(), date, hours_worked, "Meal Violation (No 30-min Break)"])
+                break
     
     return pd.DataFrame(violations, columns=["Employee #", "Name", "Date", "Worked Hours", "Violation Type"])
 
