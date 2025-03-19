@@ -26,10 +26,11 @@ def process_work_sessions(text):
             current_employee = (emp_id.strip(), emp_name.strip())
 
         # Identificar registros de entrada, salida y descanso
-        work_match = re.search(r"(IN|OUT) (\w{3} \d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m)", line)
+        work_match = re.search(r"(IN|OUT) (\w{3} \d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m)(.*Break.*)?", line)
         if work_match and current_employee:
-            status, date, time = work_match.groups()
-            employees[current_employee][date].append((status, time))
+            status, date, time, break_flag = work_match.groups()
+            is_break = bool(break_flag)
+            employees[current_employee][date].append((status, time, is_break))
     
     return employees
 
@@ -43,17 +44,16 @@ def detect_meal_violations(employees):
 
             in_time, out_time = None, None
             total_hours = 0
-            took_break_early = False
             breaks = []
 
-            for status, time in records:
+            for status, time, is_break in records:
                 time_parsed = pd.to_datetime(time, format="%I:%M%p")
                 if status == "IN" and not in_time:
                     in_time = time_parsed
                 elif status == "OUT":
                     out_time = time_parsed
                     total_hours = (out_time - in_time).total_seconds() / 3600 if in_time else 0
-                elif "Break" in status:
+                if is_break:
                     breaks.append(time_parsed)
 
             if total_hours > 6:
@@ -96,6 +96,10 @@ def main():
             st.dataframe(violations_df)
         else:
             st.write("No se encontraron Meal Violations en el archivo proporcionado.")
+            st.write("### Posibles causas del problema:")
+            st.write("- Los datos de entrada/salida no están siendo extraídos correctamente.")
+            st.write("- Los descansos no están siendo identificados adecuadamente.")
+            st.write("- El formato del PDF es diferente y necesita ajustes en la extracción.")
 
 if __name__ == "__main__":
     main()
