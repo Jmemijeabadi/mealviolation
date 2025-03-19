@@ -53,26 +53,28 @@ def process_data(text):
     df = pd.DataFrame(records)
     return df
 
-# Función para evaluar violaciones de comida
+# Función para evaluar violaciones de comida considerando múltiples turnos en un día
 def check_meal_violation(df):
     df["Meal Violation"] = "No"
     fmt = "%I:%M%p"
     
-    for index, row in df.iterrows():
-        if row["Horas trabajadas"] > 6:
-            entrada = datetime.strptime(row["Hora Entrada"], fmt)
-            quinta_hora = entrada + timedelta(hours=5)
+    grouped = df.groupby(["Employee #", "Fecha"])
+    
+    for (emp_id, fecha), group in grouped:
+        total_hours = group["Horas trabajadas"].sum()
+        if total_hours > 6:
+            entrada_principal = datetime.strptime(group.iloc[0]["Hora Entrada"], fmt)
+            quinta_hora = entrada_principal + timedelta(hours=5)
             
-            descansos = df[(df["Employee #"] == row["Employee #"]) & (df["Fecha"] == row["Fecha"]) & (df["Horas trabajadas"] < 6)]
-            
+            descansos = group[group["Horas trabajadas"] < 6]
             descanso_tomado = any(
-                (datetime.strptime(desc["Hora Entrada"], fmt) > entrada) and
-                (datetime.strptime(desc["Hora Entrada"], fmt) < quinta_hora)
-                for _, desc in descansos.iterrows()
+                (datetime.strptime(row["Hora Entrada"], fmt) > entrada_principal) and
+                (datetime.strptime(row["Hora Entrada"], fmt) <= quinta_hora)
+                for _, row in descansos.iterrows()
             )
             
             if not descanso_tomado:
-                df.at[index, "Meal Violation"] = "Sí"
+                df.loc[(df["Employee #"] == emp_id) & (df["Fecha"] == fecha), "Meal Violation"] = "Sí"
     
     return df
 
