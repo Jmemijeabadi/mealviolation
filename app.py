@@ -14,7 +14,7 @@ def extract_text_from_pdf(pdf_file):
     return text
 
 def parse_employee_data(text):
-    """Extrae la información de entrada, salida y descansos de cada empleado."""
+    """Extrae la información de entrada, salida y descansos de cada empleado y los asigna correctamente."""
     records = []
     employee_id = None
     employee_name = None
@@ -26,19 +26,20 @@ def parse_employee_data(text):
         if emp_match:
             employee_id, employee_name = emp_match.groups()
         
-        # Detectar registros de entrada, salida y descansos
-        work_match = re.search(r"(IN|OUT) (\w{3} \d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m)(.*Break.*)?", line)
-        if work_match and employee_id and employee_name:
-            status, date, time, break_flag = work_match.groups()
-            is_break = bool(break_flag)
-            records.append({
-                "Employee #": employee_id,
-                "Employee Name": employee_name,
-                "Date": date,
-                "Status": status,
-                "Time": time,
-                "Is Break": is_break
-            })
+        # Detectar registros de entrada, salida y descansos solo si hay un empleado asignado
+        if employee_id and employee_name:
+            work_match = re.search(r"(IN|OUT) (\w{3} \d{1,2}/\d{1,2}/\d{4}) (\d{1,2}:\d{2}[ap]m)(.*Break.*)?", line)
+            if work_match:
+                status, date, time, break_flag = work_match.groups()
+                is_break = bool(break_flag)
+                records.append({
+                    "Employee #": employee_id,
+                    "Employee Name": employee_name,
+                    "Date": date,
+                    "Status": status,
+                    "Time": time,
+                    "Is Break": is_break
+                })
     return pd.DataFrame(records)
 
 def detect_meal_violations(df):
