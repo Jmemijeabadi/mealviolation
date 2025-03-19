@@ -5,9 +5,9 @@ import re
 from datetime import datetime, timedelta
 
 # Función para extraer texto del PDF
-def extract_text_from_pdf(pdf_path):
+def extract_text_from_pdf(uploaded_file):
     text = ""
-    with pdfplumber.open(pdf_path) as pdf:
+    with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
             text += page.extract_text() + "\n"
     return text
@@ -85,10 +85,7 @@ st.title("Análisis de Violaciones de Comida (Meal Violations)")
 uploaded_file = st.file_uploader("Sube el archivo PDF de asistencia", type=["pdf"])
 
 if uploaded_file is not None:
-    with open("temp.pdf", "wb") as f:
-        f.write(uploaded_file.read())
-    
-    text = extract_text_from_pdf("temp.pdf")
+    text = extract_text_from_pdf(uploaded_file)
     df = process_data(text)
     df = check_meal_violation(df)
     
