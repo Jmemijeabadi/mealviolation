@@ -10,6 +10,7 @@ def extract_data_from_pdf(pdf_path):
     entry_pattern = re.compile(r"(\d{3} - [A-Z\s-]+)\s+(IN|OUT)\s+(\w{3})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)\s*(\d*\.\d*)?\s*(.+)?")
     total_hours_pattern = re.compile(r"Total Hours Worked This Week:\s*(\d+\.\d+)")
     pay_pattern = re.compile(r"(\d{3} - [A-Z\s-]+)\s*(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)")
+    adjusted_hours_pattern = re.compile(r"Adjusted By\s+(.+)")
     
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
@@ -28,6 +29,9 @@ def extract_data_from_pdf(pdf_path):
                         "name": employee_match.group(2),
                         "time_cards": [],
                         "total_hours": 0.0,
+                        "regular_hours": 0.0,
+                        "overtime_hours": 0.0,
+                        "total_pay": 0.0,
                         "jobs": []
                     }
                     continue
@@ -66,6 +70,11 @@ def extract_data_from_pdf(pdf_path):
                     overtime_hours = float(pay_match.group(3))
                     regular_pay = float(pay_match.group(4))
                     total_pay = float(pay_match.group(5))
+                    
+                    current_employee["regular_hours"] += regular_hours
+                    current_employee["overtime_hours"] += overtime_hours
+                    current_employee["total_pay"] += total_pay
+                    
                     current_employee["jobs"].append({
                         "job": job,
                         "regular_hours": regular_hours,
@@ -73,6 +82,10 @@ def extract_data_from_pdf(pdf_path):
                         "regular_pay": regular_pay,
                         "total_pay": total_pay
                     })
+                
+                adjusted_hours_match = adjusted_hours_pattern.search(line)
+                if adjusted_hours_match and current_employee:
+                    current_employee["adjusted_by"] = adjusted_hours_match.group(1).strip()
     
     if current_employee:
         employees.append(current_employee)
