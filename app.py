@@ -62,19 +62,18 @@ def check_meal_violation(df):
     
     for (emp_id, fecha), group in grouped:
         total_hours = group["Horas trabajadas"].sum()
-        if total_hours > 6:
-            entrada_principal = datetime.strptime(group.iloc[0]["Hora Entrada"], fmt)
-            quinta_hora = entrada_principal + timedelta(hours=5)
-            
-            descansos = group[(group["Horas trabajadas"] < 6) & (group["Hora Entrada"] != group.iloc[0]["Hora Entrada"])]
-            descanso_tomado = any(
-                (datetime.strptime(row["Hora Entrada"], fmt) > entrada_principal) and
-                (datetime.strptime(row["Hora Entrada"], fmt) < quinta_hora)
-                for _, row in descansos.iterrows()
-            )
-            
-            if not descanso_tomado:
-                df.loc[(df["Employee #"] == emp_id) & (df["Fecha"] == fecha), "Meal Violation"] = "Sí"
+        entrada_principal = datetime.strptime(group.iloc[0]["Hora Entrada"], fmt)
+        quinta_hora = entrada_principal + timedelta(hours=5)
+        
+        descansos = group[(group["Horas trabajadas"] < 6) & (group["Hora Entrada"] != group.iloc[0]["Hora Entrada"])]
+        descanso_tomado = any(
+            (datetime.strptime(row["Hora Entrada"], fmt) >= entrada_principal) and
+            (datetime.strptime(row["Hora Entrada"], fmt) < quinta_hora)
+            for _, row in descansos.iterrows()
+        )
+        
+        if total_hours > 6 and not descanso_tomado:
+            df.loc[(df["Employee #"] == emp_id) & (df["Fecha"] == fecha), "Meal Violation"] = "Sí"
     
     return df
 
