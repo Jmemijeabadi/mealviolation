@@ -55,28 +55,23 @@ def process_data(text):
 
 # Función para evaluar violaciones de comida
 def check_meal_violation(df):
-    meal_violations = []
+    df["Meal Violation"] = "No"
+    fmt = "%I:%M%p"
     
-    for _, row in df.iterrows():
-        violation = "No"
-        
+    for index, row in df.iterrows():
         if row["Horas trabajadas"] > 6:
-            fmt = "%I:%M%p"
             entrada = datetime.strptime(row["Hora Entrada"], fmt)
             quinta_hora = entrada + timedelta(hours=5)
-
+            
+            descansos = df[(df["Employee #"] == row["Employee #"]) & (df["Fecha"] == row["Fecha"]) & (df["Hora Entrada"] != row["Hora Entrada"])]
+            
             descanso_tomado = any(
-                (datetime.strptime(rec["Hora Entrada"], fmt) >= entrada) and
-                (datetime.strptime(rec["Hora Salida"], fmt) <= quinta_hora)
-                for _, rec in df[df["Employee #"] == row["Employee #"]].iterrows()
+                datetime.strptime(desc["Hora Entrada"], fmt) < quinta_hora for _, desc in descansos.iterrows()
             )
-
+            
             if not descanso_tomado:
-                violation = "Sí"
-        
-        meal_violations.append(violation)
+                df.at[index, "Meal Violation"] = "Sí"
     
-    df["Meal Violation"] = meal_violations
     return df
 
 # Streamlit UI
