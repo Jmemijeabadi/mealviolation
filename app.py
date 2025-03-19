@@ -26,9 +26,11 @@ def extract_data_from_pdf(pdf_path):
                     }
                     continue
                 
-                time_entry_match = re.match(r"(\w{3})IN (.+)(\d{1,2}:\d{2}[ap]m)(\d{1,2}/\d{1,2}/\d{4})", line)
+                time_entry_match = re.match(r"(\w{3})IN\s+(.+?)\s+(\d{1,2}:\d{2}[ap]m)\s+(\d{1,2}/\d{1,2}/\d{4})", line)
+                time_exit_match = re.match(r"(\w{3})OUT\s+(.+?)\s+(\d{1,2}:\d{2}[ap]m)\s+(\d{1,2}/\d{1,2}/\d{4})\s*(\d*\.\d*)?", line)
+                
                 if time_entry_match and current_employee:
-                    current_employee["time_cards"].append({
+                    entry = {
                         "date": time_entry_match.group(4),
                         "job": time_entry_match.group(2).strip(),
                         "entries": [{
@@ -36,7 +38,28 @@ def extract_data_from_pdf(pdf_path):
                             "status": "IN",
                             "reason": time_entry_match.group(2).strip()
                         }]
-                    })
+                    }
+                    current_employee["time_cards"].append(entry)
+                
+                if time_exit_match and current_employee:
+                    if current_employee["time_cards"] and current_employee["time_cards"][-1]["date"] == time_exit_match.group(4):
+                        current_employee["time_cards"][-1]["entries"].append({
+                            "time": time_exit_match.group(3),
+                            "status": "OUT",
+                            "reason": time_exit_match.group(2).strip(),
+                            "hours": float(time_exit_match.group(5)) if time_exit_match.group(5) else None
+                        })
+                    else:
+                        current_employee["time_cards"].append({
+                            "date": time_exit_match.group(4),
+                            "job": time_exit_match.group(2).strip(),
+                            "entries": [{
+                                "time": time_exit_match.group(3),
+                                "status": "OUT",
+                                "reason": time_exit_match.group(2).strip(),
+                                "hours": float(time_exit_match.group(5)) if time_exit_match.group(5) else None
+                            }]
+                        })
     
     if current_employee:
         data.append(current_employee)
