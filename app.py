@@ -8,7 +8,8 @@ def extract_data_from_pdf(pdf_path):
     current_employee = None
     employee_pattern = re.compile(r"(\d{4,}) - (.+)")
     entry_pattern = re.compile(r"(\d{3} - [A-Z\s-]+)\s+(IN|OUT)\s+(\w{3})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2}[ap]m)\s*(\d*\.\d*)?\s*(.+)?")
-    total_hours_pattern = re.compile(r"Total Hours Worked This Pay Period:\s*(\d+\.\d+)")
+    total_hours_pattern = re.compile(r"Total Hours Worked This Week:\s*(\d+\.\d+)")
+    pay_pattern = re.compile(r"(\d{3} - [A-Z\s-]+)\s*(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)")
     
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
@@ -26,7 +27,8 @@ def extract_data_from_pdf(pdf_path):
                         "employee_id": employee_match.group(1),
                         "name": employee_match.group(2),
                         "time_cards": [],
-                        "total_hours": 0.0
+                        "total_hours": 0.0,
+                        "jobs": []
                     }
                     continue
                 
@@ -52,10 +54,25 @@ def extract_data_from_pdf(pdf_path):
                         "hours": hours,
                         "reason": reason
                     })
-                    
+                
                 total_hours_match = total_hours_pattern.search(line)
                 if total_hours_match and current_employee:
                     current_employee["total_hours"] = float(total_hours_match.group(1))
+                
+                pay_match = pay_pattern.match(line)
+                if pay_match and current_employee:
+                    job = pay_match.group(1).strip()
+                    regular_hours = float(pay_match.group(2))
+                    overtime_hours = float(pay_match.group(3))
+                    regular_pay = float(pay_match.group(4))
+                    total_pay = float(pay_match.group(5))
+                    current_employee["jobs"].append({
+                        "job": job,
+                        "regular_hours": regular_hours,
+                        "overtime_hours": overtime_hours,
+                        "regular_pay": regular_pay,
+                        "total_pay": total_pay
+                    })
     
     if current_employee:
         employees.append(current_employee)
