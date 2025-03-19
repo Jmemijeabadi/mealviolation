@@ -3,3 +3,4 @@ pymupdf
 pandas
 watchdog
 pdfplumber
+PyPDF2
