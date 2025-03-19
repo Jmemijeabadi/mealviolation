@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
 import PyPDF2
-from io import StringIO
+import re
 from datetime import datetime, timedelta
 
 def extract_data_from_pdf(pdf_file):
     """
-    Extracts relevant data from the PDF file.
+    Extracts text from the PDF file.
     """
     text = ""
     pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -16,51 +16,41 @@ def extract_data_from_pdf(pdf_file):
 
 def parse_time_card_data(text):
     """
-    Parses the extracted text to create a structured DataFrame.
+    Parses the extracted text using regular expressions.
     """
-    lines = text.split('\n')
-    data =# Initialize data as an empty list
-    current_employee = None
-    employee_number = None
+    data =
+    employee_pattern = re.compile(r"(\d+)\s+([\w\s,]+)")
+    time_entry_pattern = re.compile(
+        r"(IN|OUT)\s+([A-Za-z]*\s*\d+/\d+/\d+)\s+(\d+:\d+[ap]m)"
+    )
 
-    for line in lines:
-        if "Employee # And Name" in line:
-            continue  # Skip header lines
-        if line.strip() and line[0].isdigit():
-            # Extract Employee Number and Name
-            parts = line.split(" ", 1)
-            employee_number = parts[0].strip()
-            current_employee = parts[1].strip()
-            continue
+    current_employee_num = None
+    current_employee_name = None
 
-        if "IN" in line and "OUT" in line:
-            # Found a clock in/out line
-            parts = line.split()
-            job_name = parts[0]
-            in_date_str = parts[1]
-            in_time_str = parts[2]
-            out_date_str = parts[3]
-            out_time_str = parts[4]
+    for match in employee_pattern.finditer(text):
+        current_employee_num = match.group(1)
+        current_employee_name = match.group(2).strip()
 
-            try:
-                # Handle cases where IN and OUT are on different days
-                in_datetime_str = f"{in_date_str} {in_time_str}"
-                out_datetime_str = f"{out_date_str} {out_time_str}"
+    for match in time_entry_pattern.finditer(text):
+        entry_type = match.group(1)
+        date_str = match.group(2)
+        time_str = match.group(3)
 
-                in_datetime = datetime.strptime(in_datetime_str, "%a %m/%d/%Y %I:%M%p")
-                out_datetime = datetime.strptime(out_datetime_str, "%a %m/%d/%Y %I:%M%p")
+        try:
+            # Attempt to parse date and time
+            dt_str = f"{date_str} {time_str}"
+            date_object = datetime.strptime(dt_str, "%a %m/%d/%Y %I:%M%p")
 
+            if current_employee_num and current_employee_name:
                 data.append({
-                    "Employee #": employee_number,
-                    "Employee Name": current_employee,
-                    "Job Name": job_name,
-                    "Clock In": in_datetime,
-                    "Clock Out": out_datetime
+                    "Employee #": current_employee_num,
+                    "Employee Name": current_employee_name,
+                    "Entry Type": entry_type,
+                    "Datetime": date_object,
                 })
-            except ValueError:
-                # Handle cases where the date/time format might be slightly different
-                print(f"Skipping line due to date/time format issue: {line}")
-                continue
+        except ValueError:
+            print(f"Skipping: Could not parse datetime from '{date_str} {time_str}'")
+            continue
 
     return pd.DataFrame(data)
 
@@ -69,28 +59,30 @@ def calculate_meal_violations(df):
     Calculates meal violations based on the provided rules.
     """
     violations =
-    grouped_df = df.groupby(["Employee #", "Employee Name", df["Clock In"].dt.date])
+    if df.empty:
+        return pd.DataFrame(violations)  # Return empty DataFrame if input is empty
+
+    grouped_df = df.groupby(["Employee #", "Employee Name", df["Datetime"].dt.date])
 
     for (employee_num, employee_name, work_date), group in grouped_df:
-        group = group.sort_values(by="Clock In")  # Ensure chronological order
+        group = group.sort_values(by="Datetime")
         total_hours_worked = timedelta(0)
         first_clock_in = None
         last_clock_out = None
 
+        # Calculate total hours worked
         for index, row in group.iterrows():
             if first_clock_in is None:
-                first_clock_in = row["Clock In"]
-            last_clock_out = row["Clock Out"]
-            hours_worked = row["Clock Out"] - row["Clock In"]
-            total_hours_worked += hours_worked
-
+                first_clock_in = row["Datetime"]
+            last_clock_out = row["Datetime"]
+        total_hours_worked = last_clock_out - first_clock_in
         total_hours_worked_hours = total_hours_worked.total_seconds() / 3600
 
         # Check for total work time exceeding 6 hours without a 30-minute break
         if total_hours_worked_hours > 6:
             has_30_min_break = False
-            for index, row in group.iterrows():
-                time_diff = row["Clock Out"] - row["Clock In"]
+            for i in range(len(group) - 1):
+                time_diff = group.iloc[i + 1]["Datetime"] - group.iloc[i]["Datetime"]
                 if time_diff >= timedelta(minutes=30):
                     has_30_min_break = True
                     break
@@ -108,16 +100,16 @@ def calculate_meal_violations(df):
             has_break_before_5 = False
             time_worked_before_break = timedelta(0)
             for index, row in group.iterrows():
-              time_worked_before_break += row["Clock Out"] - row["Clock In"]
-              if time_worked_before_break >= timedelta(hours=5):
-                break_duration = timedelta(0)
-                next_index = group.index.get_loc(index) + 1
-                if next_index < len(group):
-                  next_row = group.iloc[next_index]
-                  break_duration = next_row["Clock In"] - row["Clock Out"]
-                if break_duration >= timedelta(minutes=30):
-                  has_break_before_5 = True
-                  break
+                time_worked_before_break += row["Datetime"] - first_clock_in
+                if time_worked_before_break >= timedelta(hours=5):
+                    break_duration = timedelta(0)
+                    next_index = group.index.get_loc(index) + 1
+                    if next_index < len(group):
+                        next_row = group.iloc[next_index]
+                        break_duration = next_row["Datetime"] - row["Datetime"]
+                    if break_duration >= timedelta(minutes=30):
+                        has_break_before_5 = True
+                        break
             if not has_break_before_5:
                 violations.append({
                     "Employee #": employee_num,
