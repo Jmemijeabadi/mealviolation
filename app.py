@@ -53,7 +53,7 @@ def detect_meal_violations(employees):
                 elif status == "OUT":
                     out_time = time_parsed
                     total_hours = (out_time - in_time).total_seconds() / 3600 if in_time else 0
-                else:
+                elif "Break" in status:
                     breaks.append(time_parsed)
 
             if total_hours > 6:
@@ -82,6 +82,13 @@ def main():
         st.text_area("Vista previa del texto extraído", text[:2000])  # Muestra los primeros 2000 caracteres
         
         structured_sessions = process_work_sessions(text)
+        
+        # Mostrar estructura extraída antes del análisis
+        st.subheader("Datos estructurados de empleados")
+        structured_df = pd.DataFrame([{ "Employee #": emp[0], "Employee Name": emp[1], "Date": date, "Records": str(records) }
+                                      for emp, data in structured_sessions.items() for date, records in data.items()])
+        st.dataframe(structured_df)
+        
         violations_df = detect_meal_violations(structured_sessions)
         
         if not violations_df.empty:
