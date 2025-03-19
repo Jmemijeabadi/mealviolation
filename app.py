@@ -6,7 +6,6 @@ import re
 def extract_data_from_pdf(pdf_path):
     data = []
     current_employee = None
-    time_entries = []
     
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
@@ -16,55 +15,36 @@ def extract_data_from_pdf(pdf_path):
             
             lines = text.split("\n")
             for line in lines:
+                # Detectar empleados
                 employee_match = re.match(r"(\d{4,}) - (.+)", line)
                 if employee_match:
                     if current_employee:
-                        current_employee["time_cards"].extend(time_entries)
                         data.append(current_employee)
                     current_employee = {
                         "id": employee_match.group(1),
                         "name": employee_match.group(2),
                         "time_cards": []
                     }
-                    time_entries = []
                     continue
                 
-                time_entry_match = re.match(r"(\w{3})IN\s+(.+?)\s+(\d{1,2}:\d{2}[ap]m)\s+(\d{1,2}/\d{1,2}/\d{4})", line)
-                time_exit_match = re.match(r"(\w{3})OUT\s+(.+?)\s+(\d{1,2}:\d{2}[ap]m)\s+(\d{1,2}/\d{1,2}/\d{4})\s*(\d*\.\d*)?", line)
-                
-                if time_entry_match:
-                    date = time_entry_match.group(4)
-                    job = time_entry_match.group(2).strip()
-                    time = time_entry_match.group(3)
+                # Detectar registros de entrada y salida
+                time_match = re.match(r"(\w{3})\s+(IN|OUT)\s+(.+?)\s+(\d{1,2}:\d{2}[ap]m)\s+(\d{1,2}/\d{1,2}/\d{4})\s*(\d*\.\d*)?", line)
+                if time_match and current_employee:
+                    date = time_match.group(5)
+                    status = time_match.group(2)
+                    job = time_match.group(3).strip()
+                    time = time_match.group(4)
+                    hours = float(time_match.group(6)) if time_match.group(6) else None
                     
-                    existing_entry = next((entry for entry in time_entries if entry["date"] == date and entry["job"] == job), None)
-                    if existing_entry:
-                        existing_entry["entries"].append({"time": time, "status": "IN", "reason": job})
-                    else:
-                        time_entries.append({
-                            "date": date,
-                            "job": job,
-                            "entries": [{"time": time, "status": "IN", "reason": job}]
-                        })
+                    # Buscar si ya hay una entrada para ese día y ese trabajo
+                    existing_entry = next((entry for entry in current_employee["time_cards"] if entry["date"] == date and entry["job"] == job), None)
+                    if not existing_entry:
+                        existing_entry = {"date": date, "job": job, "entries": []}
+                        current_employee["time_cards"].append(existing_entry)
                     
-                if time_exit_match:
-                    date = time_exit_match.group(4)
-                    job = time_exit_match.group(2).strip()
-                    time = time_exit_match.group(3)
-                    hours = float(time_exit_match.group(5)) if time_exit_match.group(5) else None
-                    
-                    existing_entry = next((entry for entry in time_entries if entry["date"] == date and entry["job"] == job), None)
-                    if existing_entry:
-                        existing_entry["entries"].append({"time": time, "status": "OUT", "reason": job, "hours": hours})
-                    else:
-                        time_entries.append({
-                            "date": date,
-                            "job": job,
-                            "entries": [{"time": time, "status": "OUT", "reason": job, "hours": hours}]
-                        })
+                    existing_entry["entries"].append({"time": time, "status": status, "hours": hours})
     
     if current_employee:
-        current_employee["time_cards"].extend(time_entries)
         data.append(current_employee)
     
     return {"employees": data}
