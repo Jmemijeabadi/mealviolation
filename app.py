@@ -1,94 +1,88 @@
 import streamlit as st
 import pandas as pd
 import pdfplumber
-import re
 from datetime import datetime, timedelta
 
-# Función para extraer texto del PDF
-def extract_text_from_pdf(uploaded_file):
-    text = ""
+# Función para extraer datos de los PDFs
+def extract_data_from_pdf(uploaded_file):
+    records = []
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
-            text += page.extract_text() + "\n"
-    return text
-
-# Función para procesar datos extraídos
-def process_data(text):
-    records = []
-    lines = text.split("\n")
-    current_employee = None
-    
-    for i, line in enumerate(lines):
-        emp_match = re.match(r"(\d{4,5}) - ([A-Za-z ]+)", line)
-        if emp_match:
-            current_employee = emp_match.groups()
-
-        if "IN" in line and current_employee:
-            date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", line)
-            time_in_match = re.search(r"(\d{1,2}:\d{2}[ap]m)", line)
+            text = page.extract_text()
+            lines = text.split("\n")
+            emp_id, name = None, None
             
-            if date_match and time_in_match:
-                date = date_match.group(1)
-                time_in = time_in_match.group(1)
-
-                for j in range(i + 1, min(i + 5, len(lines))):
-                    if "OUT" in lines[j]:
-                        time_out_match = re.search(r"(\d{1,2}:\d{2}[ap]m)", lines[j])
-                        hours_match = re.search(r"OUT\s+\d{1,2}:\d{2}[ap]m\s+([\d\.]+)", lines[j])
-                        
-                        if time_out_match and hours_match:
-                            time_out = time_out_match.group(1)
-                            hours_worked = float(hours_match.group(1))
-
-                            records.append({
-                                "Employee #": current_employee[0],
-                                "Nombre": current_employee[1],
-                                "Fecha": date,
-                                "Hora Entrada": time_in,
-                                "Hora Salida": time_out,
-                                "Horas trabajadas": hours_worked
-                            })
-                        break
+            for line in lines:
+                if "Payroll ID" in line:
+                    parts = line.split()
+                    emp_id = parts[2]
+                    name = " ".join(parts[3:])
+                
+                if any(keyword in line for keyword in ["Clock In", "Clock Out"]):
+                    parts = line.split()
+                    date = parts[-1]
+                    time = parts[-2]
+                    status = "On Break" if "On Break" in line else "Work"
+                    records.append([emp_id, name, date, time, status])
     
-    df = pd.DataFrame(records)
-    return df
+    return pd.DataFrame(records, columns=["Employee #", "Name", "Date", "Time", "Status"])
 
-# Función para evaluar violaciones de comida considerando múltiples turnos en un día
-def check_meal_violation(df):
-    df["Meal Violation"] = "No"
-    fmt = "%I:%M%p"
+# Función para analizar violaciones de comida
+def analyze_meal_violations(df):
+    df['Date'] = pd.to_datetime(df['Date'], format='%m/%d/%Y')
+    df['Time'] = pd.to_datetime(df['Time'], format='%I:%M%p').dt.time
     
-    grouped = df.groupby(["Employee #", "Fecha"])
+    violations = []
+    grouped = df.groupby(['Employee #', 'Name', 'Date'])
     
-    for (emp_id, fecha), group in grouped:
-        total_hours = group["Horas trabajadas"].sum()
-        entrada_principal = datetime.strptime(group.iloc[0]["Hora Entrada"], fmt)
-        quinta_hora = entrada_principal + timedelta(hours=5)
+    for (emp_id, name, date), group in grouped:
+        group = group.sort_values(by=['Time'])
+        work_periods = []
+        total_worked = timedelta()
+        breaks = []
+        first_punch = None
         
-        descansos = group[(group["Horas trabajadas"] < 6) & (group["Hora Entrada"] != group.iloc[0]["Hora Entrada"])]
-        descanso_tomado = any(
-            (datetime.strptime(row["Hora Entrada"], fmt) >= entrada_principal) and
-            (datetime.strptime(row["Hora Entrada"], fmt) < quinta_hora)
-            for _, row in descansos.iterrows()
-        )
+        for _, row in group.iterrows():
+            if row['Status'] == 'On Break':
+                breaks.append(row)
+            else:
+                if not first_punch:
+                    first_punch = datetime.combine(date, row['Time'])
+                start = datetime.combine(date, row['Time'])
+                work_periods.append(start)
         
-        if total_hours > 6 and not descanso_tomado:
-            df.loc[(df["Employee #"] == emp_id) & (df["Fecha"] == fecha), "Meal Violation"] = "Sí"
+        if len(work_periods) > 1:
+            total_worked = work_periods[-1] - work_periods[0]
+            total_hours = total_worked.total_seconds() / 3600
+            
+            # Verificar Meal Violation 1
+            if total_hours > 6 and not any((b['Time'].hour * 60 + b['Time'].minute) >= 30 for b in breaks):
+                violations.append([emp_id, name, date.date(), total_hours, "No tomó un descanso de 30 minutos en total"])
+            
+            # Verificar Meal Violation 2
+            fifth_hour_mark = first_punch + timedelta(hours=5)
+            before_fifth_hour = [b for b in breaks if datetime.combine(date, b['Time']) <= fifth_hour_mark]
+            if total_hours > 6 and not any((b['Time'].hour * 60 + b['Time'].minute) >= 30 for b in before_fifth_hour):
+                violations.append([emp_id, name, date.date(), total_hours, "No tomó un descanso de 30 minutos antes de la quinta hora de trabajo"])
     
-    return df
+    return pd.DataFrame(violations, columns=["Employee #", "Name", "Date", "Hours Worked", "Meal Violation"])
 
-# Streamlit UI
-st.title("Análisis de Violaciones de Comida (Meal Violations)")
+# Interfaz de usuario con Streamlit
+st.title("Análisis de Violaciones de Descanso Laboral")
 
-uploaded_file = st.file_uploader("Sube el archivo PDF de asistencia", type=["pdf"])
+uploaded_files = st.file_uploader("Sube los archivos PDF de registros de tiempo", accept_multiple_files=True, type=["pdf"])
 
-if uploaded_file is not None:
-    text = extract_text_from_pdf(uploaded_file)
-    df = process_data(text)
-    df = check_meal_violation(df)
+if uploaded_files:
+    all_data = pd.DataFrame()
+    for uploaded_file in uploaded_files:
+        df = extract_data_from_pdf(uploaded_file)
+        all_data = pd.concat([all_data, df], ignore_index=True)
     
-    # Filtrar solo las violaciones de comida
-    df_violations = df[df["Meal Violation"] == "Sí"]
-    
-    st.write("### Resultados (Solo con Violaciones de Comida)")
-    st.dataframe(df_violations)
+    if not all_data.empty:
+        violations_df = analyze_meal_violations(all_data)
+        
+        if not violations_df.empty:
+            st.subheader("Violaciones Detectadas")
+            st.dataframe(violations_df)
+        else:
+            st.success("No se detectaron violaciones en los datos analizados.")
