@@ -24,7 +24,7 @@ def extract_data_from_pdf(pdf_path):
                     current_employee = {
                         "employee_id": employee_match.group(1),
                         "name": employee_match.group(2),
-                        "time_cards": []
+                        "time_cards": {}
                     }
                     continue
                 
@@ -38,12 +38,13 @@ def extract_data_from_pdf(pdf_path):
                     hours = float(time_match.group(6)) if time_match.group(6) else None
                     reason = time_match.group(7).strip() if time_match.group(7) else ""
                     
-                    existing_entry = next((entry for entry in current_employee["time_cards"] if entry["date"] == date and entry["job"] == job), None)
-                    if not existing_entry:
-                        existing_entry = {"date": date, "job": job, "entries": []}
-                        current_employee["time_cards"].append(existing_entry)
+                    if date not in current_employee["time_cards"]:
+                        current_employee["time_cards"][date] = {}
                     
-                    existing_entry["entries"].append({
+                    if job not in current_employee["time_cards"][date]:
+                        current_employee["time_cards"][date][job] = []
+                    
+                    current_employee["time_cards"][date][job].append({
                         "day": day,
                         "time": time,
                         "status": status,
