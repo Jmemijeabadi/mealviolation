@@ -19,7 +19,7 @@ def parse_time_card_data(text):
     Parses the extracted text to create a structured DataFrame.
     """
     lines = text.split('\n')
-    data =
+    data =# Initialize data as an empty list
     current_employee = None
     employee_number = None
 
