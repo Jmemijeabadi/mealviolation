@@ -30,21 +30,23 @@ def detect_meal_violations(df):
     df["Break Duration"] = (df["Clock Out"] - df["Clock In"]).dt.total_seconds() / 3600
     
     # Detectar violaciones cuando el 'On Break' es mayor a 5 horas
-    df_break_violations = df[(df["Clock Out Status"] == "On Break") & (df["Break Duration"] >= 5)]
+    df_break_violations = df[(df["Clock Out Status"] == "On Break") & (df["Break Duration"] >= 5)].copy()
     df_break_violations["Violation Type"] = "Break Over 5 Hours"
+    df_break_violations = df_break_violations[["Correct Employee Name", "Work Date", "Break Duration", "Violation Type"]]
+    df_break_violations = df_break_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date", "Break Duration": "Total_Hours_Worked"})
     
     # Detectar empleados que no tomaron ningún descanso
     employees_with_breaks = df[df["Clock Out Status"] == "On Break"]["Correct Employee Name"].unique()
-    df_no_breaks = df[~df["Correct Employee Name"].isin(employees_with_breaks)]
+    df_no_breaks = df[~df["Correct Employee Name"].isin(employees_with_breaks)].copy()
     df_no_breaks = df_no_breaks.groupby(["Correct Employee Name", "Work Date"]).agg(
         Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600)
     ).reset_index()
     df_no_breaks = df_no_breaks[df_no_breaks["Total_Hours_Worked"] > 6]
     df_no_breaks["Violation Type"] = "No Break Taken"
+    df_no_breaks = df_no_breaks.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
     
     # Unir ambas violaciones
     df_violations = pd.concat([df_break_violations, df_no_breaks], ignore_index=True)
-    df_violations = df_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
     df_violations = df_violations[["Employee Name", "Date", "Total_Hours_Worked", "Violation Type"]]
     
     return df_violations
