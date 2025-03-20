@@ -36,18 +36,18 @@ def detect_meal_violations(df):
     df_break_violations = df_break_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date", "Break Duration": "Total_Hours_Worked"})
     
     # Detectar empleados que no tomaron ningún descanso
-    employees_with_breaks = df[df["Clock Out Status"] == "On Break"]["Correct Employee Name"].unique()
-    df_no_breaks = df[~df["Correct Employee Name"].isin(employees_with_breaks)].copy()
-    df_no_breaks = df_no_breaks.groupby(["Correct Employee Name", "Work Date"]).agg(
-        Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600)
+    df_no_breaks = df.groupby(["Correct Employee Name", "Work Date"]).agg(
+        Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600),
+        Break_Taken=("Clock Out Status", lambda x: (x == "On Break").any())
     ).reset_index()
-    df_no_breaks = df_no_breaks[df_no_breaks["Total_Hours_Worked"] > 6]
+    
+    df_no_breaks = df_no_breaks[(df_no_breaks["Total_Hours_Worked"] > 6) & (df_no_breaks["Break_Taken"] == False)]
     df_no_breaks["Violation Type"] = "No Break Taken"
     df_no_breaks = df_no_breaks.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
+    df_no_breaks = df_no_breaks[["Employee Name", "Date", "Total_Hours_Worked", "Violation Type"]]
     
     # Unir ambas violaciones
     df_violations = pd.concat([df_break_violations, df_no_breaks], ignore_index=True)
-    df_violations = df_violations[["Employee Name", "Date", "Total_Hours_Worked", "Violation Type"]]
     
     return df_violations
 
