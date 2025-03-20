@@ -26,39 +26,28 @@ def load_excel(file):
     return df
 
 def detect_meal_violations(df):
-    """Detecta violaciones de comida si el empleado no registró 'On Break' o si 'Regular Hours' es mayor a 5."""
+    """Detecta violaciones de comida si 'Regular Hours' es mayor a 5 y 'Clock Out Status' es 'On Break'."""
     
-    # Convertir Regular Hours a valores numéricos
+    # Asegurar que Regular Hours sea numérico
     df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
     
-    # Agrupar por empleado y fecha
-    df_summary = df.groupby(["Correct Employee Name", "Work Date"]).agg(
-        Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600),
-        Break_Taken=("Clock Out Status", lambda x: (x == "On Break").any()),
-        Max_Regular_Hours=("Regular Hours", "max")
+    # Filtrar solo los registros donde 'Clock Out Status' es 'On Break' y 'Regular Hours' > 5
+    df_violations = df[(df["Clock Out Status"].str.lower() == "on break") & (df["Regular Hours"] > 5)].copy()
+    
+    # Calcular las horas totales trabajadas por día
+    df_total_hours = df.groupby(["Correct Employee Name", "Work Date"]).agg(
+        Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600)
     ).reset_index()
     
-    # Aplicar las reglas de Meal Violation
-    df_summary["Violation Type"] = None
+    # Fusionar con las violaciones
+    df_violations = df_violations.merge(df_total_hours, on=["Correct Employee Name", "Work Date"], how="left")
     
-    # Regla 1: Trabajó más de 6 horas y no registró 'On Break'
-    df_summary.loc[
-        (df_summary["Total_Hours_Worked"] > 6) & (df_summary["Break_Taken"] == False), 
-        "Violation Type"
-    ] = "No Break Taken"
+    # Agregar la columna de Violation
+    df_violations["Violation"] = "Yes"
     
-    # Regla 2: Trabajó más de 6 horas y el descanso fue mayor a 5 horas
-    df_summary.loc[
-        (df_summary["Total_Hours_Worked"] > 6) & (df_summary["Max_Regular_Hours"] > 5), 
-        "Violation Type"
-    ] = "Break Over 5 Hours"
-    
-    # Filtrar solo las violaciones detectadas
-    df_violations = df_summary.dropna(subset=["Violation Type"])
-    
-    # Seleccionar las columnas requeridas para la salida final
+    # Seleccionar las columnas requeridas
     df_violations = df_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
-    df_violations = df_violations[["Employee Name", "Date", "Total_Hours_Worked", "Violation Type"]]
+    df_violations = df_violations[["Employee Name", "Date", "Regular Hours", "Total_Hours_Worked", "Violation"]]
     
     return df_violations
 
