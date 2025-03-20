@@ -11,9 +11,8 @@ def load_and_analyze_data(uploaded_file):
                       "Clock Out Status", "Adjustment Count", "Regular Hours", "Regular Pay",
                       "Overtime Hours", "Overtime Pay", "Gross Sales", "Tips"]
         
-        # Eliminar filas innecesarias
-        df = df.dropna(subset=["Name"])
-        df = df[df["Name"] != "Total"]
+        # Filtrar solo las filas que contienen nombres de empleados (Payroll ID no nulo)
+        df = df[df["Payroll ID"].notna()]
         
         # Convertir tipos de datos
         df["Clock In Date and Time"] = pd.to_datetime(df["Clock In Date and Time"], errors='coerce')
@@ -25,7 +24,7 @@ def load_and_analyze_data(uploaded_file):
         total_hours_per_day = df.groupby(["Name", "Date"])["Regular Hours"].sum().reset_index()
         total_hours_per_day.rename(columns={"Regular Hours": "Total Worked Hours in Day"}, inplace=True)
         
-        # Unir los datos con las meal violations
+        # Filtrar Meal Violations
         meal_violations = df[(df["Clock Out Status"] == "On break") & (df["Regular Hours"] > 5)]
         meal_violations = meal_violations.merge(total_hours_per_day, on=["Name", "Date"], how="left")
         
