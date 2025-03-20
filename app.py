@@ -50,7 +50,7 @@ def extract_employee_data(pdf_path):
                                 clock_in_time = None  # Reiniciar para la siguiente entrada y salida
                                 
                                 # Verificar si se tomó un descanso antes de la quinta hora
-                                if cumulative_hours < 5:
+                                if "On Break" in emp_text and cumulative_hours < 5:
                                     took_break = True
                                     break_before_fifth_hour = True
                         
