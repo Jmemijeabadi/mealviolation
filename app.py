@@ -21,19 +21,25 @@ def extract_employee_data(pdf_path):
                 if not re.search(r"\b(Job|Server|Cook|Cashier|Runner|Manager|Prep|Sanitation|Bussers|Food)\b", name, re.IGNORECASE):
                     
                     # Extraer las fechas y los registros de tiempo trabajados por día
-                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4}).*?(\d+\.\d+)", text)
+                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4}).*?([0-9]+\.[0-9]+)", text)
                     
                     for date, hours in work_matches:
                         hours = float(hours)
-                        employee_data[(emp_num, name)][date].append(hours)  # Guardar todas las horas trabajadas en una lista
+                        took_break = re.search(rf"{date}.*?On Break", text) is not None  # Verificar si hay un descanso ese día
+                        
+                        employee_data[(emp_num, name)][date].append((hours, took_break))  # Guardar horas y si tomó descanso
 
     # Evaluar Meal Violations
     detailed_data = []
     for (emp_num, name), work_days in employee_data.items():
-        for date, hours_list in work_days.items():
-            total_hours = sum(hours_list)  # Sumar todas las horas trabajadas en el día
-            took_break = "Break" in text  # Verificar si hay algún descanso en el texto
-            break_before_fifth_hour = "Break" in text[:text.find(date)]  # Solo hasta la fecha detectada
+        for date, records in work_days.items():
+            total_hours = sum([h for h, _ in records])  # Sumar todas las horas trabajadas en el día
+            took_break = any(break_flag for _, break_flag in records)  # Verificar si hubo algún descanso en el día
+            
+            break_before_fifth_hour = any(
+                break_flag and sum(h for h, _ in records[:i]) < 5
+                for i, (h, break_flag) in enumerate(records)
+            )
             
             if total_hours > 6 and not took_break:
                 violation_type = "Condición A: No tomó ningún descanso"
