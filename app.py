@@ -9,11 +9,12 @@ def extract_employee_numbers(pdf_path):
     with fitz.open(pdf_path) as doc:
         for page in doc:
             text = page.get_text("text")
+            text = re.sub(r"\s+", " ", text)  # Normalizar espacios en blanco
             
-            # Expresión regular mejorada para capturar Employee # correctamente
-            matches = re.findall(r"(\b\d{3,10}\b) - ([A-Z][a-z]+(?: [A-Z][a-z]+)*)", text)
+            # Expresión regular mejorada para detectar Employee # con más variabilidad
+            matches = re.findall(r"(\b\d{3,10}\b)\s*-\s*([A-Za-z]+(?:\s+[A-Za-z]+)*)", text)
             for emp_num, name in matches:
-                employee_numbers.add((emp_num, name))
+                employee_numbers.add((emp_num.strip(), name.strip()))
     
     return sorted(employee_numbers, key=lambda x: x[0])
 
