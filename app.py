@@ -12,10 +12,10 @@ def load_and_analyze_data(uploaded_file):
                       "Overtime Hours", "Overtime Pay", "Gross Sales", "Tips"]
         
         # Crear una columna para almacenar el último nombre de empleado encontrado
-        df["Employee Name"] = df["Raw Name"].where(df["Payroll ID"].isna()).ffill()
+        df["Employee Name"] = df["Raw Name"].where(df["Payroll ID"].notna()).ffill()
         
-        # Filtrar solo las filas con registros de horas válidos (Payroll ID no nulo)
-        df = df[df["Payroll ID"].notna()]
+        # Filtrar registros de tiempo válidos asegurando que no se pierdan nombres
+        df = df[df["Clock In Date and Time"].notna()]
         
         # Convertir tipos de datos
         df["Clock In Date and Time"] = pd.to_datetime(df["Clock In Date and Time"], errors='coerce')
@@ -28,11 +28,11 @@ def load_and_analyze_data(uploaded_file):
         total_hours_per_day.rename(columns={"Regular Hours": "Total Worked Hours in Day"}, inplace=True)
         
         # Filtrar Meal Violations
-        meal_violations = df[(df["Clock Out Status"] == "On break") & (df["Regular Hours"] > 5)]
+        meal_violations = df[(df["Clock Out Status"].str.lower() == "on break") & (df["Regular Hours"] > 5)]
         meal_violations = meal_violations.merge(total_hours_per_day, on=["Employee Name", "Date"], how="left")
         
         # Seleccionar columnas deseadas
-        meal_violations = meal_violations[["Employee Name", "Regular Hours", "Total Worked Hours in Day"]]
+        meal_violations = meal_violations[["Employee Name", "Regular Hours", "Total Worked Hours in Day", "Clock In Date and Time", "Clock Out Date and Time"]]
         
         return meal_violations
     return None
