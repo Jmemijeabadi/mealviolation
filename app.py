@@ -5,7 +5,7 @@ import pandas as pd
 from collections import defaultdict
 
 def extract_employee_data(pdf_path):
-    """Extrae la información de los empleados del PDF, asegurando un cálculo preciso de las horas trabajadas."""
+    """Extrae la información de los empleados del PDF, asegurando un cálculo preciso de las horas trabajadas y Meal Violations."""
     employee_data = defaultdict(lambda: defaultdict(list))  # Diccionario para almacenar registros de cada empleado por fecha
     violations = []
     
@@ -24,7 +24,7 @@ def extract_employee_data(pdf_path):
                 
                 if emp_section:
                     emp_text = emp_section[0]
-                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4})\s.*?(\d+\.\d+)", emp_text)
+                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4}).*?(\d+\.\d+)", emp_text)
                     
                     for date, hours in work_matches:
                         hours = float(hours)
@@ -32,14 +32,14 @@ def extract_employee_data(pdf_path):
                         
                         employee_data[(emp_num, name)][date].append((hours, took_break))  # Guardar horas y si tomó descanso
     
-    # Evaluar Meal Violations
+    # Evaluar Meal Violations con un cálculo más preciso
     detailed_data = []
     for (emp_num, name), work_days in employee_data.items():
         for date, records in work_days.items():
             total_hours = round(sum([h for h, _ in records]), 2)  # Sumar todas las horas trabajadas en el día con precisión decimal
             took_break = any(break_flag for _, break_flag in records)  # Verificar si hubo algún descanso en el día
             
-            # Verificar si el descanso ocurrió antes de la 5ta hora
+            # Verificar si el descanso ocurrió antes de la 5ta hora y calcular la hora exacta de inicio
             cumulative_hours = 0
             break_before_fifth_hour = False
             for h, break_flag in records:
