@@ -1,131 +1,65 @@
 import streamlit as st
-import pdfplumber
-import json
 import pandas as pd
-import re
-from collections import defaultdict
+from datetime import datetime, timedelta
 
-def extract_text_from_pdf(pdf_file):
-    """Extrae texto del PDF."""
-    text = ""
-    with pdfplumber.open(pdf_file) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
-    return text
-
-def parse_employee_data(text):
-    """Parsea los datos del PDF y genera el JSON con la estructura correcta."""
-    employees = []
-    lines = text.split("\n")
+def load_excel(file):
+    """Carga el archivo Excel y extrae la información relevante."""
+    df = pd.read_excel(file, skiprows=8)
+    df.columns = [
+        "Employee Name", "Employee ID", "Clock In", "Clock Out", "Clock Out Status",
+        "Adjustment Count", "Regular Hours", "Regular Pay", "Overtime Hours", 
+        "Overtime Pay", "Gross Sales", "Tips"
+    ]
     
-    current_employee = None
-    employee_period = None
-    records_by_date = defaultdict(lambda: {"job": "", "clock_in": "", "clock_out": "", "breaks": [], "total_hours": 0.0})
-
-    for line in lines:
-        # Detecta el inicio de un nuevo empleado
-        match = re.match(r"(\d{3,}) - (.+)", line)
-        if match:
-            if current_employee:
-                # Finaliza el empleado anterior y guarda los registros agrupados
-                current_employee["records"] = list(records_by_date.values())
-                current_employee["total_hours_worked"] = sum(r["total_hours"] for r in current_employee["records"])
-                current_employee["overtime_hours"] = 0.0  # Ajustable si hay horas extra
-                employees.append(current_employee)
-
-            # Inicia un nuevo empleado
-            employee_id = match.group(1).strip()
-            employee_name = match.group(2).strip()
-            current_employee = {
-                "id": int(employee_id),
-                "name": employee_name,
-                "period": employee_period,
-                "records": []
-            }
-            records_by_date.clear()
-
-        # Detecta el periodo del reporte
-        if "Period From" in line:
-            date_match = re.findall(r"(\d{2}/\d{2}/\d{4})", line)
-            if date_match and len(date_match) == 2:
-                employee_period = {"from": date_match[0], "to": date_match[1]}
-
-        # Detecta registros de entrada/salida y descansos
-        parts = line.split()
-        if len(parts) >= 6 and "IN" in parts[0] and "OUT" in parts[3]:
-            try:
-                date = parts[-1]
-                job = parts[-3]
-                clock_in = parts[1]
-                clock_out = parts[3]
-                status = parts[2]
-
-                try:
-                    total_hours = float(parts[-2])
-                except ValueError:
-                    total_hours = 0.0  # Si hay un error (ej. "FORGOT"), asignar 0.0
-                
-                # Estructura del registro agrupado por fecha
-                if status == "On Break":
-                    records_by_date[date]["breaks"].append({"start": clock_in, "duration": total_hours})
-                else:
-                    records_by_date[date]["job"] = job
-                    records_by_date[date]["clock_in"] = clock_in if not records_by_date[date]["clock_in"] else records_by_date[date]["clock_in"]
-                    records_by_date[date]["clock_out"] = clock_out
-                    records_by_date[date]["total_hours"] += total_hours
-
-            except Exception as e:
-                st.error(f"Error procesando línea: {line}\nDetalles: {str(e)}")
-
-    # Guardar el último empleado
-    if current_employee:
-        current_employee["records"] = list(records_by_date.values())
-        current_employee["total_hours_worked"] = sum(r["total_hours"] for r in current_employee["records"])
-        current_employee["overtime_hours"] = 0.0
-        employees.append(current_employee)
-
-    return employees
-
-# 📌 Interfaz de Streamlit
-st.title("📊 Gestión de Registros de Empleados")
-
-uploaded_file = st.file_uploader("📂 Sube un archivo PDF", type="pdf")
-
-if uploaded_file is not None:
-    st.write("⏳ Procesando archivo...")
-
-    # Extraer texto del PDF
-    text = extract_text_from_pdf(uploaded_file)
+    df = df.dropna(subset=["Clock In", "Clock Out"])
+    df["Clock In"] = pd.to_datetime(df["Clock In"], errors='coerce')
+    df["Clock Out"] = pd.to_datetime(df["Clock Out"], errors='coerce')
+    df["Work Date"] = df["Clock In"].dt.date
     
-    # Procesar empleados
-    employees = parse_employee_data(text)
+    df_raw_name_column = pd.read_excel(file, sheet_name="Reports", usecols=[0], skiprows=8)
+    df_raw_name_column.columns = ["Name"]
+    df_raw_name_column["Is Employee Name"] = df_raw_name_column["Name"].str.contains(",", na=False)
+    df_raw_name_column["Correct Employee Name"] = df_raw_name_column["Name"].where(df_raw_name_column["Is Employee Name"]).ffill()
     
-    # Convertir a formato JSON
-    json_data = json.dumps({"employees": employees}, indent=4)
+    df["Correct Employee Name"] = df_raw_name_column["Correct Employee Name"]
+    
+    return df
 
-    # 📋 Mostrar DataFrame con resumen de empleados
-    st.write("### 📋 Resumen de empleados")
-    df = pd.DataFrame([
-        {
-            "ID": emp["id"],
-            "Nombre": emp["name"],
-            "Total Registros": len(emp["records"]),
-            "Horas Totales": emp["total_hours_worked"],
-            "Horas Extra": emp["overtime_hours"]
-        } for emp in employees
-    ])
-    st.dataframe(df)
+def detect_meal_violations(df):
+    """Detecta violaciones de comida basadas en las reglas especificadas."""
+    df_grouped = df.groupby(["Correct Employee Name", "Work Date"]).agg(
+        Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600),
+        First_Clock_In=("Clock In", "min"),
+        Break_Taken=("Clock Out Status", lambda x: (x == "On Break").any()),
+        Break_Before_Fifth_Hour=("Clock In", lambda x: any(
+            ((row - x.min()).total_seconds() / 3600 < 5) for row in x if row in df[df["Clock Out Status"] == "On Break"]["Clock In"].values
+        ))
+    ).reset_index()
+    
+    df_grouped["Violation Type"] = None
+    df_grouped.loc[
+        (df_grouped["Total_Hours_Worked"] > 6) & (df_grouped["Break_Before_Fifth_Hour"] == False), 
+        "Violation Type"
+    ] = "Break After 5th Hour"
+    
+    df_grouped.loc[
+        (df_grouped["Total_Hours_Worked"] > 6) & (df_grouped["Break_Taken"] == False), 
+        "Violation Type"
+    ] = "No Break Taken"
+    
+    df_violations = df_grouped.dropna(subset=["Violation Type"])
+    df_violations = df_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
+    df_violations = df_violations[["Employee Name", "Date", "Total_Hours_Worked", "Violation Type"]]
+    
+    return df_violations
 
-    # 📂 Mostrar detalles de los empleados
-    st.write("### 📂 Detalles de los empleados")
-    for emp in employees:
-        with st.expander(f"📌 {emp['name']} (ID: {emp['id']})"):
-            emp_df = pd.DataFrame(emp["records"])
-            st.dataframe(emp_df)
+# Streamlit UI
+st.title("Meal Violations Analyzer")
 
-    # 📝 Mostrar el JSON generado en la app
-    st.write("### 📝 JSON Generado")
-    st.code(json_data, language="json")
+uploaded_file = st.file_uploader("Upload Excel File", type=["xls", "xlsx"])
 
-    # ⬇️ Botón para descargar el JSON
-    st.download_button("⬇️ Descargar JSON", json_data, "empleados.json", "application/json")
+if uploaded_file:
+    df = load_excel(uploaded_file)
+    results = detect_meal_violations(df)
+    st.write("### Meal Violations Detected")
+    st.dataframe(results)
