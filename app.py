@@ -20,8 +20,18 @@ def load_and_analyze_data(uploaded_file):
         df["Clock Out Date and Time"] = pd.to_datetime(df["Clock Out Date and Time"], errors='coerce')
         df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
         
-        # Filtrar Meal Violations
+        # Calcular las horas totales trabajadas por día
+        df["Date"] = df["Clock In Date and Time"].dt.date
+        total_hours_per_day = df.groupby(["Name", "Date"])["Regular Hours"].sum().reset_index()
+        total_hours_per_day.rename(columns={"Regular Hours": "Total Worked Hours in Day"}, inplace=True)
+        
+        # Unir los datos con las meal violations
         meal_violations = df[(df["Clock Out Status"] == "On break") & (df["Regular Hours"] > 5)]
+        meal_violations = meal_violations.merge(total_hours_per_day, on=["Name", "Date"], how="left")
+        
+        # Seleccionar columnas deseadas
+        meal_violations = meal_violations[["Name", "Regular Hours", "Total Worked Hours in Day"]]
+        
         return meal_violations
     return None
 
