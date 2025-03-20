@@ -6,7 +6,7 @@ from collections import defaultdict
 
 def extract_employee_data(pdf_path):
     """Extrae la información de los empleados del PDF, incluyendo horas trabajadas y descansos."""
-    employee_data = defaultdict(lambda: defaultdict(float))  # Diccionario anidado para acumular horas trabajadas por día
+    employee_data = defaultdict(lambda: defaultdict(list))  # Diccionario para almacenar registros de cada empleado por fecha
     violations = []
     
     with fitz.open(pdf_path) as doc:
@@ -25,11 +25,13 @@ def extract_employee_data(pdf_path):
                     
                     for date, hours in work_matches:
                         hours = float(hours)
-                        employee_data[(emp_num, name)][date] += hours  # Sumar horas trabajadas en la misma fecha
+                        employee_data[(emp_num, name)][date].append(hours)  # Guardar todas las horas trabajadas en una lista
 
     # Evaluar Meal Violations
+    detailed_data = []
     for (emp_num, name), work_days in employee_data.items():
-        for date, total_hours in work_days.items():
+        for date, hours_list in work_days.items():
+            total_hours = sum(hours_list)  # Sumar todas las horas trabajadas en el día
             took_break = "Break" in text  # Verificar si hay algún descanso en el texto
             break_before_fifth_hour = "Break" in text[:text.find(date)]  # Solo hasta la fecha detectada
             
@@ -40,9 +42,9 @@ def extract_employee_data(pdf_path):
             else:
                 violation_type = "Sin Violación"
             
-            violations.append([emp_num, name, date, total_hours, violation_type])
+            detailed_data.append([emp_num, name, date, total_hours, violation_type])
     
-    return violations
+    return detailed_data
 
 def main():
     st.title("PDF Employee Meal Violation Checker")
@@ -61,10 +63,10 @@ def main():
         
         if employee_data:
             df = pd.DataFrame(employee_data, columns=["Employee #", "Nombre", "Fecha", "Horas Trabajadas", "Violación"])
-            st.write("### Meal Violations Detectadas:")
+            st.write("### Registros de Empleados con Meal Violations y Sin Violaciones:")
             st.dataframe(df)
         else:
-            st.write("No se encontraron violaciones de comida en el archivo.")
+            st.write("No se encontraron registros en el archivo.")
         
 if __name__ == "__main__":
     main()
