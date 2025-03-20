@@ -45,6 +45,9 @@ def detect_meal_violations(df):
     # Agregar la columna de Violation
     df_violations["Violation"] = "Yes"
     
+    # Asegurar que no haya columnas duplicadas
+    df_violations = df_violations.loc[:, ~df_violations.columns.duplicated()].copy()
+    
     # Seleccionar las columnas requeridas
     df_violations = df_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
     df_violations = df_violations[["Employee Name", "Date", "Regular Hours", "Total_Hours_Worked", "Violation"]]
