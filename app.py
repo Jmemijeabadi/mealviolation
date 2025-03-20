@@ -1,63 +1,46 @@
 import streamlit as st
 import pandas as pd
 
-def load_excel(file):
-    """Carga el archivo Excel y extrae la información relevante."""
-    df = pd.read_excel(file, skiprows=8)
-    df.columns = [
-        "Employee Name", "Employee ID", "Clock In", "Clock Out", "Clock Out Status",
-        "Adjustment Count", "Regular Hours", "Regular Pay", "Overtime Hours", 
-        "Overtime Pay", "Gross Sales", "Tips"
-    ]
-    
-    df = df.dropna(subset=["Clock In", "Clock Out"])
-    df["Clock In"] = pd.to_datetime(df["Clock In"], errors='coerce')
-    df["Clock Out"] = pd.to_datetime(df["Clock Out"], errors='coerce')
-    df["Work Date"] = df["Clock In"].dt.date
-    
-    df_raw_name_column = pd.read_excel(file, sheet_name="Reports", usecols=[0], skiprows=8)
-    df_raw_name_column.columns = ["Name"]
-    df_raw_name_column["Is Employee Name"] = df_raw_name_column["Name"].str.contains(",", na=False)
-    df_raw_name_column["Correct Employee Name"] = df_raw_name_column["Name"].where(df_raw_name_column["Is Employee Name"]).ffill()
-    
-    df["Correct Employee Name"] = df_raw_name_column["Correct Employee Name"]
-    
-    return df
+# Función para cargar y analizar el archivo
+def load_and_analyze_data(uploaded_file):
+    if uploaded_file is not None:
+        df = pd.read_excel(uploaded_file, sheet_name='Reports', skiprows=8)
+        
+        # Renombrar columnas
+        df.columns = ["Name", "Payroll ID", "Clock In Date and Time", "Clock Out Date and Time",
+                      "Clock Out Status", "Adjustment Count", "Regular Hours", "Regular Pay",
+                      "Overtime Hours", "Overtime Pay", "Gross Sales", "Tips"]
+        
+        # Eliminar filas innecesarias
+        df = df.dropna(subset=["Name"])
+        df = df[df["Name"] != "Total"]
+        
+        # Convertir tipos de datos
+        df["Clock In Date and Time"] = pd.to_datetime(df["Clock In Date and Time"], errors='coerce')
+        df["Clock Out Date and Time"] = pd.to_datetime(df["Clock Out Date and Time"], errors='coerce')
+        df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
+        
+        # Filtrar Meal Violations
+        meal_violations = df[(df["Clock Out Status"] == "On break") & (df["Regular Hours"] > 5)]
+        return meal_violations
+    return None
 
-def detect_meal_violations(df):
-    """Detecta violaciones de comida si 'Regular Hours' es mayor a 5 y 'Clock Out Status' es 'On Break'."""
-    
-    # Asegurar que Regular Hours sea numérico
-    df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
-    
-    # Filtrar solo los registros donde 'Clock Out Status' es 'On Break' y 'Regular Hours' > 5
-    df_violations = df[(df["Clock Out Status"].str.contains("On Break", case=False, na=False)) & (df["Regular Hours"] > 5)].copy()
-    
-    # Calcular las horas totales trabajadas por día
-    df_total_hours = df.groupby(["Correct Employee Name", "Work Date"]).agg(
-        Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600)
-    ).reset_index()
-    
-    # Fusionar con las violaciones
-    df_violations = df_violations.merge(df_total_hours, on=["Correct Employee Name", "Work Date"], how="left")
-    
-    # Agregar la columna de Violation
-    df_violations["Violation"] = "Yes"
-    
-    # Seleccionar las columnas requeridas y eliminar duplicados
-    df_violations = df_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
-    df_violations = df_violations.drop_duplicates()
-    df_violations = df_violations[["Employee Name", "Date", "Regular Hours", "Total_Hours_Worked", "Violation"]]
-    
-    return df_violations
+# Configuración de la aplicación Streamlit
+st.title("Meal Violations Tracker")
+st.write("Sube un archivo de Excel para analizar las Meal Violations de los empleados.")
 
-# Streamlit UI
-st.title("Meal Violations Analyzer")
-
-uploaded_file = st.file_uploader("Upload Excel File", type=["xls", "xlsx"])
+# Cargar archivo
+uploaded_file = st.file_uploader("Sube un archivo de Excel", type=["xls", "xlsx"])
 
 if uploaded_file:
-    df = load_excel(uploaded_file)
-    results = detect_meal_violations(df)
-    st.write("### Meal Violations Detected")
-    st.dataframe(results)
+    meal_violations_df = load_and_analyze_data(uploaded_file)
+    
+    if meal_violations_df is not None and not meal_violations_df.empty:
+        st.success(f"Se encontraron {len(meal_violations_df)} Meal Violations.")
+        st.dataframe(meal_violations_df)
+        
+        # Opción para descargar los resultados
+        csv = meal_violations_df.to_csv(index=False).encode('utf-8')
+        st.download_button("Descargar resultados en CSV", data=csv, file_name="meal_violations.csv", mime="text/csv")
+    else:
+        st.warning("No se encontraron Meal Violations en el archivo cargado.")
