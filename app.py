@@ -36,6 +36,9 @@ def extract_employee_data(pdf_path):
                         total_hours = 0
                         clock_in_time = None
                         took_break = False
+                        break_before_fifth_hour = False
+                        
+                        cumulative_hours = 0
                         
                         for record_type, time in records:
                             if record_type == "IN":
@@ -43,17 +46,19 @@ def extract_employee_data(pdf_path):
                             elif record_type == "OUT" and clock_in_time:
                                 worked_hours = (time - clock_in_time).total_seconds() / 3600
                                 total_hours += worked_hours
+                                cumulative_hours += worked_hours
                                 clock_in_time = None  # Reiniciar para la siguiente entrada y salida
                                 
                                 # Verificar si se tomó un descanso antes de la quinta hora
-                                if worked_hours < 5:
+                                if cumulative_hours < 5:
                                     took_break = True
+                                    break_before_fifth_hour = True
                         
                         total_hours = round(total_hours, 2)
                         
                         if total_hours > 6 and not took_break:
                             violation_type = "Condición A: No tomó ningún descanso"
-                        elif total_hours > 6 and not took_break:
+                        elif total_hours > 6 and not break_before_fifth_hour:
                             violation_type = "Condición B: No tomó descanso antes de la 5ª hora"
                         else:
                             violation_type = "Sin Violación"
