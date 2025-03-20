@@ -17,6 +17,9 @@ def load_and_analyze_data(uploaded_file):
         # Filtrar registros de tiempo válidos asegurando que no se pierdan nombres
         df = df[df["Clock In Date and Time"].notna()]
         
+        # Excluir filas donde el nombre sea un título de trabajo en lugar de un empleado
+        df = df[df["Payroll ID"].notna()]
+        
         # Convertir tipos de datos
         df["Clock In Date and Time"] = pd.to_datetime(df["Clock In Date and Time"], errors='coerce')
         df["Clock Out Date and Time"] = pd.to_datetime(df["Clock Out Date and Time"], errors='coerce')
@@ -25,6 +28,11 @@ def load_and_analyze_data(uploaded_file):
         # Normalizar la columna "Clock Out Status" para evitar errores de formato
         df["Clock Out Status"] = df["Clock Out Status"].astype(str).str.strip().str.lower()
         
+        # Calcular total de horas trabajadas por día
+        df["Date"] = df["Clock In Date and Time"].dt.date
+        total_hours_per_day = df.groupby(["Employee Name", "Date"])["Regular Hours"].sum().reset_index()
+        total_hours_per_day.rename(columns={"Regular Hours": "Total Worked Hours in Day"}, inplace=True)
+        
         # Filtrar Meal Violations asegurando que se excluyen registros incorrectos
         meal_violations = df[
             (df["Clock Out Status"] == "on break") &
@@ -32,8 +40,11 @@ def load_and_analyze_data(uploaded_file):
             (df["Employee Name"].notna())
         ]
         
+        # Unir los datos de horas totales trabajadas por día
+        meal_violations = meal_violations.merge(total_hours_per_day, on=["Employee Name", "Date"], how="left")
+        
         # Seleccionar columnas deseadas
-        meal_violations = meal_violations[["Employee Name", "Regular Hours", "Clock In Date and Time", "Clock Out Date and Time"]]
+        meal_violations = meal_violations[["Employee Name", "Regular Hours", "Total Worked Hours in Day", "Clock In Date and Time", "Clock Out Date and Time"]]
         
         return meal_violations
     return None
