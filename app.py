@@ -5,30 +5,33 @@ import pandas as pd
 from collections import defaultdict
 
 def extract_employee_data(pdf_path):
-    """Extrae la información de los empleados del PDF, incluyendo horas trabajadas y descansos."""
+    """Extrae la información de los empleados del PDF, incluyendo horas trabajadas y descansos de manera detallada."""
     employee_data = defaultdict(lambda: defaultdict(list))  # Diccionario para almacenar registros de cada empleado por fecha
     violations = []
     
     with fitz.open(pdf_path) as doc:
-        for page in doc:
-            text = page.get_text("text")
-            text = re.sub(r"\s+", " ", text)  # Normalizar espacios en blanco
-            
-            # Extraer Employee # y nombres
-            matches = re.findall(r"(\b\d{3,10}\b)\s*-\s*([A-Za-z]+(?:\s+[A-Za-z]+)*)", text)
-            
-            for emp_num, name in matches:
-                if not re.search(r"\b(Job|Server|Cook|Cashier|Runner|Manager|Prep|Sanitation|Bussers|Food)\b", name, re.IGNORECASE):
-                    
-                    # Extraer las fechas y los registros de tiempo trabajados por día
-                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4}).*?([0-9]+\.[0-9]+)", text)
+        text = "\n".join([page.get_text("text") for page in doc])
+        text = re.sub(r"\s+", " ", text)  # Normalizar espacios en blanco
+        
+        # Extraer Employee # y nombres
+        matches = re.findall(r"(\b\d{3,10}\b)\s*-\s*([A-Za-z]+(?:\s+[A-Za-z]+)*)", text)
+        
+        for emp_num, name in matches:
+            if not re.search(r"\b(Job|Server|Cook|Cashier|Runner|Manager|Prep|Sanitation|Bussers|Food)\b", name, re.IGNORECASE):
+                
+                # Extraer las fechas y los registros de tiempo trabajados por día
+                emp_section = re.findall(rf"{emp_num} - {name}(.*?)(?=\n\d{{3,10}} - |$)", text, re.DOTALL)
+                
+                if emp_section:
+                    emp_text = emp_section[0]
+                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4}).*?(\d+\.\d+)", emp_text)
                     
                     for date, hours in work_matches:
                         hours = float(hours)
-                        took_break = re.search(rf"{date}.*?On Break", text) is not None  # Verificar si hay un descanso ese día
+                        took_break = "On Break" in emp_text  # Verificar si hay un descanso ese día
                         
                         employee_data[(emp_num, name)][date].append((hours, took_break))  # Guardar horas y si tomó descanso
-
+    
     # Evaluar Meal Violations
     detailed_data = []
     for (emp_num, name), work_days in employee_data.items():
