@@ -24,11 +24,11 @@ def extract_employee_data(pdf_path):
                 
                 if emp_section:
                     emp_text = emp_section[0]
-                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4}).*?(\d+\.\d+)", emp_text)
+                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4})\s.*?(\d+\.\d+)", emp_text)
                     
                     for date, hours in work_matches:
                         hours = float(hours)
-                        took_break = "On Break" in emp_text  # Verificar si hay un descanso ese día
+                        took_break = bool(re.search(rf"{date}.*?On Break", emp_text))  # Verificar si hay un descanso ese día
                         
                         employee_data[(emp_num, name)][date].append((hours, took_break))  # Guardar horas y si tomó descanso
     
@@ -39,10 +39,14 @@ def extract_employee_data(pdf_path):
             total_hours = sum([h for h, _ in records])  # Sumar todas las horas trabajadas en el día
             took_break = any(break_flag for _, break_flag in records)  # Verificar si hubo algún descanso en el día
             
-            break_before_fifth_hour = any(
-                break_flag and sum(h for h, _ in records[:i]) < 5
-                for i, (h, break_flag) in enumerate(records)
-            )
+            # Verificar si el descanso ocurrió antes de la 5ta hora
+            cumulative_hours = 0
+            break_before_fifth_hour = False
+            for h, break_flag in records:
+                cumulative_hours += h
+                if break_flag and cumulative_hours < 5:
+                    break_before_fifth_hour = True
+                    break
             
             if total_hours > 6 and not took_break:
                 violation_type = "Condición A: No tomó ningún descanso"
