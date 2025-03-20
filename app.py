@@ -30,7 +30,7 @@ def detect_meal_violations(df):
     df["Break Duration"] = (df["Clock Out"] - df["Clock In"]).dt.total_seconds() / 3600
     
     # Detectar violaciones cuando el 'On Break' es mayor a 5 horas
-    df_break_violations = df[(df["Clock Out Status"] == "On Break") & (df["Break Duration"] > 5)]
+    df_break_violations = df[(df["Clock Out Status"] == "On Break") & (df["Break Duration"] >= 5)]
     df_break_violations["Violation Type"] = "Break Over 5 Hours"
     
     # Detectar empleados que no tomaron ningún descanso
