@@ -5,6 +5,7 @@ import pandas as pd
 from io import StringIO
 
 def extract_text_from_pdf(pdf_file):
+    """Extrae texto de un archivo PDF."""
     text = ""
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
@@ -12,6 +13,7 @@ def extract_text_from_pdf(pdf_file):
     return text
 
 def parse_employee_data(text):
+    """Parsea el texto del PDF para extraer la información de empleados."""
     employees = []
     lines = text.split("\n")
     
@@ -39,7 +41,7 @@ def parse_employee_data(text):
                     clock_in = parts[1]
                     clock_out = parts[3]
                     
-                    # Intentar convertir las horas a float, manejar errores
+                    # Manejar errores en horas trabajadas
                     try:
                         total_hours = float(parts[-2])
                     except ValueError:
@@ -62,15 +64,26 @@ def parse_employee_data(text):
     
     return employees
 
-st.title("Gestión de Registros de Empleados")
+# Interfaz de Streamlit
+st.title("📊 Gestión de Registros de Empleados")
 
-uploaded_file = st.file_uploader("Sube un archivo PDF", type="pdf")
+# Cargar archivo PDF
+uploaded_file = st.file_uploader("📂 Sube un archivo PDF", type="pdf")
 
 if uploaded_file is not None:
+    st.write("⏳ Procesando archivo...")
+
+    # Extraer texto del PDF
     text = extract_text_from_pdf(uploaded_file)
+    
+    # Procesar empleados
     employees = parse_employee_data(text)
     
-    st.write("### Registros Extraídos")
+    # Convertir a formato JSON
+    json_data = json.dumps({"employees": employees}, indent=4)
+
+    # Mostrar DataFrame con resumen de empleados
+    st.write("### 📋 Resumen de empleados")
     df = pd.DataFrame([
         {
             "ID": emp["id"],
@@ -80,11 +93,16 @@ if uploaded_file is not None:
     ])
     st.dataframe(df)
 
-    st.write("### Detalles de los empleados")
+    # Mostrar detalles individuales de cada empleado
+    st.write("### 📂 Detalles de los empleados")
     for emp in employees:
-        st.write(f"**{emp['name']} (ID: {emp['id']})**")
-        emp_df = pd.DataFrame(emp["records"])
-        st.dataframe(emp_df)
-    
-    json_data = json.dumps({"employees": employees}, indent=4)
-    st.download_button("Descargar JSON", json_data, "empleados.json", "application/json")
+        with st.expander(f"📌 {emp['name']} (ID: {emp['id']})"):
+            emp_df = pd.DataFrame(emp["records"])
+            st.dataframe(emp_df)
+
+    # Mostrar el JSON generado en un cuadro de texto
+    st.write("### 📝 JSON Generado")
+    st.code(json_data, language="json")
+
+    # Botón de descarga del JSON
+    st.download_button("⬇️ Descargar JSON", json_data, "empleados.json", "application/json")
