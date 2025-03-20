@@ -1,29 +1,48 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import re
+import pandas as pd
 
-def extract_employee_numbers(pdf_path):
-    """Extrae los números de empleados del PDF dado, excluyendo códigos de trabajo."""
-    employee_numbers = set()
+def extract_employee_data(pdf_path):
+    """Extrae la información de los empleados del PDF, incluyendo horas trabajadas y descansos."""
+    employee_data = []
     
     with fitz.open(pdf_path) as doc:
         for page in doc:
             text = page.get_text("text")
             text = re.sub(r"\s+", " ", text)  # Normalizar espacios en blanco
             
-            # Expresión regular mejorada para capturar solo Employee # y excluir códigos de trabajo
+            # Extraer Employee # y nombres
             matches = re.findall(r"(\b\d{3,10}\b)\s*-\s*([A-Za-z]+(?:\s+[A-Za-z]+)*)", text)
             
             for emp_num, name in matches:
-                # Excluir registros que contengan palabras clave de trabajos
                 if not re.search(r"\b(Job|Server|Cook|Cashier|Runner|Manager|Prep|Sanitation|Bussers|Food)\b", name, re.IGNORECASE):
-                    employee_numbers.add((emp_num.strip(), name.strip()))
+                    
+                    # Extraer las fechas y las horas trabajadas por día
+                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4})[^\d]+?(\d+\.\d+)", text)
+                    
+                    for date, hours in work_matches:
+                        hours = float(hours)
+                        
+                        # Buscar si hay descanso registrado
+                        took_break = "Break" in text
+                        break_before_fifth_hour = "Break" in text[:text.find(date)]  # Solo hasta la fecha detectada
+                        
+                        # Evaluar Meal Violations
+                        if hours > 6 and not took_break:
+                            violation_type = "Condición A: No tomó ningún descanso"
+                        elif hours > 6 and not break_before_fifth_hour:
+                            violation_type = "Condición B: No tomó descanso antes de la 5ª hora"
+                        else:
+                            violation_type = "Sin Violación"
+                        
+                        employee_data.append([emp_num, name, date, hours, violation_type])
     
-    return sorted(employee_numbers, key=lambda x: int(x[0]))
+    return employee_data
 
 def main():
-    st.title("PDF Employee Number Extractor")
-    st.write("Sube un archivo PDF para extraer los Employee #.")
+    st.title("PDF Employee Meal Violation Checker")
+    st.write("Sube un archivo PDF para verificar Meal Violations.")
     
     uploaded_file = st.file_uploader("Sube un archivo PDF", type=["pdf"])
     
@@ -34,14 +53,14 @@ def main():
         with open(pdf_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         
-        employee_numbers = extract_employee_numbers(pdf_path)
+        employee_data = extract_employee_data(pdf_path)
         
-        if employee_numbers:
-            st.write("### Números de Empleados Extraídos:")
-            for emp_num, name in employee_numbers:
-                st.write(f"- {emp_num}: {name}")
+        if employee_data:
+            df = pd.DataFrame(employee_data, columns=["Employee #", "Nombre", "Fecha", "Horas Trabajadas", "Violación"])
+            st.write("### Meal Violations Detectadas:")
+            st.dataframe(df)
         else:
-            st.write("No se encontraron números de empleados en el archivo.")
+            st.write("No se encontraron violaciones de comida en el archivo.")
         
 if __name__ == "__main__":
     main()
