@@ -26,28 +26,24 @@ def load_excel(file):
     return df
 
 def detect_meal_violations(df):
-    """Detecta violaciones de comida basadas en las reglas especificadas."""
-    df_grouped = df.groupby(["Correct Employee Name", "Work Date"]).agg(
-        Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600),
-        First_Clock_In=("Clock In", "min"),
-        Break_Taken=("Clock Out Status", lambda x: (x == "On Break").any()),
-        Break_Before_Fifth_Hour=("Clock In", lambda x: any(
-            ((row - x.min()).total_seconds() / 3600 < 5) for row in x if row in df[df["Clock Out Status"] == "On Break"]["Clock In"].values
-        ))
+    """Detecta violaciones de comida si el tiempo de 'On Break' es mayor a 5 horas o si no hay descanso."""
+    df["Break Duration"] = (df["Clock Out"] - df["Clock In"]).dt.total_seconds() / 3600
+    
+    # Detectar violaciones cuando el 'On Break' es mayor a 5 horas
+    df_break_violations = df[(df["Clock Out Status"] == "On Break") & (df["Break Duration"] > 5)]
+    df_break_violations["Violation Type"] = "Break Over 5 Hours"
+    
+    # Detectar empleados que no tomaron ningún descanso
+    employees_with_breaks = df[df["Clock Out Status"] == "On Break"]["Correct Employee Name"].unique()
+    df_no_breaks = df[~df["Correct Employee Name"].isin(employees_with_breaks)]
+    df_no_breaks = df_no_breaks.groupby(["Correct Employee Name", "Work Date"]).agg(
+        Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600)
     ).reset_index()
+    df_no_breaks = df_no_breaks[df_no_breaks["Total_Hours_Worked"] > 6]
+    df_no_breaks["Violation Type"] = "No Break Taken"
     
-    df_grouped["Violation Type"] = None
-    df_grouped.loc[
-        (df_grouped["Total_Hours_Worked"] > 6) & (df_grouped["Break_Before_Fifth_Hour"] == False), 
-        "Violation Type"
-    ] = "Break After 5th Hour"
-    
-    df_grouped.loc[
-        (df_grouped["Total_Hours_Worked"] > 6) & (df_grouped["Break_Taken"] == False), 
-        "Violation Type"
-    ] = "No Break Taken"
-    
-    df_violations = df_grouped.dropna(subset=["Violation Type"])
+    # Unir ambas violaciones
+    df_violations = pd.concat([df_break_violations, df_no_breaks], ignore_index=True)
     df_violations = df_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
     df_violations = df_violations[["Employee Name", "Date", "Total_Hours_Worked", "Violation Type"]]
     
