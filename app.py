@@ -33,20 +33,29 @@ def parse_employee_data(text):
             # Extrae información de registros de entrada/salida
             parts = line.split()
             if len(parts) >= 5:
-                date = parts[-1]
-                job = parts[-3]
-                clock_in = parts[1]
-                clock_out = parts[3]
-                total_hours = float(parts[-2])
-                record = {
-                    "date": date,
-                    "job": job,
-                    "clock_in": clock_in,
-                    "clock_out": clock_out,
-                    "total_hours": total_hours
-                }
-                if current_employee:
-                    current_employee["records"].append(record)
+                try:
+                    date = parts[-1]
+                    job = parts[-3]
+                    clock_in = parts[1]
+                    clock_out = parts[3]
+                    
+                    # Intentar convertir las horas a float, manejar errores
+                    try:
+                        total_hours = float(parts[-2])
+                    except ValueError:
+                        total_hours = 0.0  # Si hay un error (ej. "FORGOT"), asignar 0.0
+
+                    record = {
+                        "date": date,
+                        "job": job,
+                        "clock_in": clock_in,
+                        "clock_out": clock_out,
+                        "total_hours": total_hours
+                    }
+                    if current_employee:
+                        current_employee["records"].append(record)
+                except Exception as e:
+                    st.error(f"Error al procesar la línea: {line}\nDetalles: {str(e)}")
     
     if current_employee:
         employees.append(current_employee)
