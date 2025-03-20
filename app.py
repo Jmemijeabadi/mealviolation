@@ -19,47 +19,51 @@ def extract_employee_data(pdf_path):
         for emp_num, name in matches:
             if not re.search(r"\b(Job|Server|Cook|Cashier|Runner|Manager|Prep|Sanitation|Bussers|Food)\b", name, re.IGNORECASE):
                 
-                # Extraer las fechas y las horas trabajadas
+                # Extraer registros de tiempo trabajados por día
                 emp_section = re.findall(rf"{emp_num} - {name}(.*?)(?=\n\d{{3,10}} - |$)", text, re.DOTALL)
                 
                 if emp_section:
                     emp_text = emp_section[0]
-                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4})\s.*?IN.*?(\d{1,2}:\d{2}[ap]m).*?OUT.*?(\d{1,2}:\d{2}[ap]m)", emp_text)
+                    work_matches = re.findall(r"(\w{3})\s+(IN|OUT)\s+.*?(\d{1,2}:\d{2}[ap]m)\s+(\d{1,2}/\d{1,2}/\d{4})", emp_text)
                     
-                    for date, clock_in, clock_out in work_matches:
-                        # Convertir horas a formato de 24 horas para cálculos
-                        clock_in_time = pd.to_datetime(clock_in, format="%I:%M%p")
-                        clock_out_time = pd.to_datetime(clock_out, format="%I:%M%p")
-                        hours_worked = round((clock_out_time - clock_in_time).total_seconds() / 3600, 2)
+                    daily_records = defaultdict(list)
+                    for day, record_type, time, date in work_matches:
+                        time = pd.to_datetime(time, format="%I:%M%p")  # Convertir a formato de 24 horas
+                        daily_records[date].append((record_type, time))
+                    
+                    for date, records in daily_records.items():
+                        records.sort(key=lambda x: x[1])  # Ordenar por hora
+                        total_hours = 0
+                        clock_in_time = None
+                        took_break = False
                         
-                        took_break = bool(re.search(rf"{date}.*?OUT On Break", emp_text))  # Verificar si hay un descanso ese día
+                        for record_type, time in records:
+                            if record_type == "IN":
+                                clock_in_time = time
+                            elif record_type == "OUT" and clock_in_time:
+                                worked_hours = (time - clock_in_time).total_seconds() / 3600
+                                total_hours += worked_hours
+                                clock_in_time = None  # Reiniciar para la siguiente entrada y salida
+                                
+                                # Verificar si se tomó un descanso antes de la quinta hora
+                                if worked_hours < 5:
+                                    took_break = True
                         
-                        employee_data[(emp_num, name)][date].append((hours_worked, took_break))  # Guardar horas y si tomó descanso
+                        total_hours = round(total_hours, 2)
+                        
+                        if total_hours > 6 and not took_break:
+                            violation_type = "Condición A: No tomó ningún descanso"
+                        elif total_hours > 6 and not took_break:
+                            violation_type = "Condición B: No tomó descanso antes de la 5ª hora"
+                        else:
+                            violation_type = "Sin Violación"
+                        
+                        employee_data[(emp_num, name)][date] = (total_hours, violation_type)
     
-    # Evaluar Meal Violations con un cálculo más preciso
     detailed_data = []
     for (emp_num, name), work_days in employee_data.items():
-        for date, records in work_days.items():
-            total_hours = round(sum([h for h, _ in records]), 2)  # Sumar todas las horas trabajadas en el día con precisión decimal
-            took_break = any(break_flag for _, break_flag in records)  # Verificar si hubo algún descanso en el día
-            
-            # Verificar si el descanso ocurrió antes de la 5ta hora y calcular la hora exacta de inicio
-            cumulative_hours = 0
-            break_before_fifth_hour = False
-            for h, break_flag in records:
-                cumulative_hours += h
-                if break_flag and cumulative_hours < 5:
-                    break_before_fifth_hour = True
-                    break
-            
-            if total_hours > 6 and not took_break:
-                violation_type = "Condición A: No tomó ningún descanso"
-            elif total_hours > 6 and not break_before_fifth_hour:
-                violation_type = "Condición B: No tomó descanso antes de la 5ª hora"
-            else:
-                violation_type = "Sin Violación"
-            
-            detailed_data.append([emp_num, name, date, total_hours, violation_type])
+        for date, (total_hours, violation) in work_days.items():
+            detailed_data.append([emp_num, name, date, total_hours, violation])
     
     return detailed_data
 
