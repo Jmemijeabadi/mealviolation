@@ -7,11 +7,14 @@ def load_and_analyze_data(uploaded_file):
         df = pd.read_excel(uploaded_file, sheet_name='Reports', skiprows=8)
         
         # Renombrar columnas
-        df.columns = ["Name", "Payroll ID", "Clock In Date and Time", "Clock Out Date and Time",
+        df.columns = ["Raw Name", "Payroll ID", "Clock In Date and Time", "Clock Out Date and Time",
                       "Clock Out Status", "Adjustment Count", "Regular Hours", "Regular Pay",
                       "Overtime Hours", "Overtime Pay", "Gross Sales", "Tips"]
         
-        # Filtrar solo las filas que contienen nombres de empleados (Payroll ID no nulo)
+        # Crear una columna para almacenar el último nombre de empleado encontrado
+        df["Employee Name"] = df["Raw Name"].where(df["Payroll ID"].isna()).ffill()
+        
+        # Filtrar solo las filas con registros de horas válidos (Payroll ID no nulo)
         df = df[df["Payroll ID"].notna()]
         
         # Convertir tipos de datos
@@ -21,15 +24,15 @@ def load_and_analyze_data(uploaded_file):
         
         # Calcular las horas totales trabajadas por día
         df["Date"] = df["Clock In Date and Time"].dt.date
-        total_hours_per_day = df.groupby(["Name", "Date"])["Regular Hours"].sum().reset_index()
+        total_hours_per_day = df.groupby(["Employee Name", "Date"])["Regular Hours"].sum().reset_index()
         total_hours_per_day.rename(columns={"Regular Hours": "Total Worked Hours in Day"}, inplace=True)
         
         # Filtrar Meal Violations
         meal_violations = df[(df["Clock Out Status"] == "On break") & (df["Regular Hours"] > 5)]
-        meal_violations = meal_violations.merge(total_hours_per_day, on=["Name", "Date"], how="left")
+        meal_violations = meal_violations.merge(total_hours_per_day, on=["Employee Name", "Date"], how="left")
         
         # Seleccionar columnas deseadas
-        meal_violations = meal_violations[["Name", "Regular Hours", "Total Worked Hours in Day"]]
+        meal_violations = meal_violations[["Employee Name", "Regular Hours", "Total Worked Hours in Day"]]
         
         return meal_violations
     return None
