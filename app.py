@@ -9,12 +9,13 @@ def extract_employee_numbers(pdf_path):
     with fitz.open(pdf_path) as doc:
         for page in doc:
             text = page.get_text("text")
-            matches = re.findall(r"\b\d{3,10}\b - [A-Z][a-z]+ [A-Z][a-z]+", text)
-            for match in matches:
-                emp_num = match.split(" - ")[0]
-                employee_numbers.add(emp_num)
+            
+            # Expresión regular mejorada para capturar Employee # correctamente
+            matches = re.findall(r"(\b\d{3,10}\b) - ([A-Z][a-z]+(?: [A-Z][a-z]+)*)", text)
+            for emp_num, name in matches:
+                employee_numbers.add((emp_num, name))
     
-    return sorted(employee_numbers)
+    return sorted(employee_numbers, key=lambda x: x[0])
 
 def main():
     st.title("PDF Employee Number Extractor")
@@ -33,7 +34,8 @@ def main():
         
         if employee_numbers:
             st.write("### Números de Empleados Extraídos:")
-            st.write(employee_numbers)
+            for emp_num, name in employee_numbers:
+                st.write(f"- {emp_num}: {name}")
         else:
             st.write("No se encontraron números de empleados en el archivo.")
         
