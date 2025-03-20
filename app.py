@@ -5,7 +5,7 @@ import pandas as pd
 from collections import defaultdict
 
 def extract_employee_data(pdf_path):
-    """Extrae la información de los empleados del PDF, incluyendo horas trabajadas y descansos de manera detallada."""
+    """Extrae la información de los empleados del PDF, asegurando un cálculo preciso de las horas trabajadas."""
     employee_data = defaultdict(lambda: defaultdict(list))  # Diccionario para almacenar registros de cada empleado por fecha
     violations = []
     
@@ -28,7 +28,7 @@ def extract_employee_data(pdf_path):
                     
                     for date, hours in work_matches:
                         hours = float(hours)
-                        took_break = bool(re.search(rf"{date}.*?On Break", emp_text))  # Verificar si hay un descanso ese día
+                        took_break = bool(re.search(rf"{date}.*?OUT On Break", emp_text))  # Verificar si hay un descanso ese día
                         
                         employee_data[(emp_num, name)][date].append((hours, took_break))  # Guardar horas y si tomó descanso
     
@@ -36,7 +36,7 @@ def extract_employee_data(pdf_path):
     detailed_data = []
     for (emp_num, name), work_days in employee_data.items():
         for date, records in work_days.items():
-            total_hours = sum([h for h, _ in records])  # Sumar todas las horas trabajadas en el día
+            total_hours = round(sum([h for h, _ in records]), 2)  # Sumar todas las horas trabajadas en el día con precisión decimal
             took_break = any(break_flag for _, break_flag in records)  # Verificar si hubo algún descanso en el día
             
             # Verificar si el descanso ocurrió antes de la 5ta hora
