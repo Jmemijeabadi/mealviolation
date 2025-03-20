@@ -1,46 +1,41 @@
 import streamlit as st
-import pdfplumber
-import json
+import fitz  # PyMuPDF
 import re
 
-def extract_employees_from_pdf(pdf_file):
-    employees = []
-    with pdfplumber.open(pdf_file) as pdf:
-        text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
-        
-        # Patrón para identificar empleados (ID - Nombre)
-        employee_pattern = re.compile(r"(\d{4}) - ([A-Z ]+)")
-        matches = employee_pattern.findall(text)
-        
-        for match in matches:
-            employee_id, name = match
-            employees.append({
-                "employee_id": employee_id,
-                "name": name.title(),
-                "time_entries": [],
-                "total_hours": 0,
-                "overtime_hours": 0,
-                "pay": 0
-            })
-        
-    return employees
+def extract_employee_numbers(pdf_path):
+    """Extrae los números de empleados del PDF dado."""
+    employee_numbers = set()
+    
+    with fitz.open(pdf_path) as doc:
+        for page in doc:
+            text = page.get_text("text")
+            matches = re.findall(r"\b\d{3,10}\b - [A-Z][a-z]+ [A-Z][a-z]+", text)
+            for match in matches:
+                emp_num = match.split(" - ")[0]
+                employee_numbers.add(emp_num)
+    
+    return sorted(employee_numbers)
 
 def main():
-    st.title("PDF Employee Timecard Extractor")
+    st.title("PDF Employee Number Extractor")
+    st.write("Sube un archivo PDF para extraer los Employee #.")
     
-    uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
+    uploaded_file = st.file_uploader("Sube un archivo PDF", type=["pdf"])
     
-    if uploaded_file:
-        employees = extract_employees_from_pdf(uploaded_file)
+    if uploaded_file is not None:
+        st.write("Procesando el archivo...")
+        pdf_path = f"temp_{uploaded_file.name}"  # Guardamos temporalmente
         
-        if employees:
-            st.success(f"{len(employees)} employees extracted successfully!")
-            st.json(employees)
-            
-            json_output = json.dumps(employees, indent=4)
-            st.download_button("Download JSON", json_output, "employees.json", "application/json")
+        with open(pdf_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        employee_numbers = extract_employee_numbers(pdf_path)
+        
+        if employee_numbers:
+            st.write("### Números de Empleados Extraídos:")
+            st.write(employee_numbers)
         else:
-            st.error("No employees found in the document.")
-
+            st.write("No se encontraron números de empleados en el archivo.")
+        
 if __name__ == "__main__":
     main()
