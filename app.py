@@ -26,28 +26,39 @@ def load_excel(file):
     return df
 
 def detect_meal_violations(df):
-    """Detecta violaciones de comida si el tiempo de 'On Break' es mayor a 5 horas o si no hay descanso."""
-    df["Break Duration"] = (df["Clock Out"] - df["Clock In"]).dt.total_seconds() / 3600
+    """Detecta violaciones de comida si el empleado no registró 'On Break' o si 'Regular Hours' es mayor a 5."""
     
-    # Detectar violaciones cuando el 'On Break' es mayor a 5 horas
-    df_break_violations = df[(df["Clock Out Status"] == "On Break") & (df["Break Duration"] >= 5)].copy()
-    df_break_violations["Violation Type"] = "Break Over 5 Hours"
-    df_break_violations = df_break_violations[["Correct Employee Name", "Work Date", "Break Duration", "Violation Type"]]
-    df_break_violations = df_break_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date", "Break Duration": "Total_Hours_Worked"})
+    # Convertir Regular Hours a valores numéricos
+    df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
     
-    # Detectar empleados que no tomaron ningún descanso
-    df_no_breaks = df.groupby(["Correct Employee Name", "Work Date"]).agg(
+    # Agrupar por empleado y fecha
+    df_summary = df.groupby(["Correct Employee Name", "Work Date"]).agg(
         Total_Hours_Worked=("Clock In", lambda x: (x.max() - x.min()).total_seconds() / 3600),
-        Break_Taken=("Clock Out Status", lambda x: (x == "On Break").any())
+        Break_Taken=("Clock Out Status", lambda x: (x == "On Break").any()),
+        Max_Regular_Hours=("Regular Hours", "max")
     ).reset_index()
     
-    df_no_breaks = df_no_breaks[(df_no_breaks["Total_Hours_Worked"] > 6) & (df_no_breaks["Break_Taken"] == False)]
-    df_no_breaks["Violation Type"] = "No Break Taken"
-    df_no_breaks = df_no_breaks.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
-    df_no_breaks = df_no_breaks[["Employee Name", "Date", "Total_Hours_Worked", "Violation Type"]]
+    # Aplicar las reglas de Meal Violation
+    df_summary["Violation Type"] = None
     
-    # Unir ambas violaciones
-    df_violations = pd.concat([df_break_violations, df_no_breaks], ignore_index=True)
+    # Regla 1: Trabajó más de 6 horas y no registró 'On Break'
+    df_summary.loc[
+        (df_summary["Total_Hours_Worked"] > 6) & (df_summary["Break_Taken"] == False), 
+        "Violation Type"
+    ] = "No Break Taken"
+    
+    # Regla 2: Trabajó más de 6 horas y el descanso fue mayor a 5 horas
+    df_summary.loc[
+        (df_summary["Total_Hours_Worked"] > 6) & (df_summary["Max_Regular_Hours"] > 5), 
+        "Violation Type"
+    ] = "Break Over 5 Hours"
+    
+    # Filtrar solo las violaciones detectadas
+    df_violations = df_summary.dropna(subset=["Violation Type"])
+    
+    # Seleccionar las columnas requeridas para la salida final
+    df_violations = df_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
+    df_violations = df_violations[["Employee Name", "Date", "Total_Hours_Worked", "Violation Type"]]
     
     return df_violations
 
