@@ -4,4 +4,5 @@ pandas
 watchdog
 pdfplumber
 PyPDF2
+openpyxl
 
