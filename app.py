@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
 
 def load_excel(file):
     """Carga el archivo Excel y extrae la información relevante."""
@@ -12,8 +11,8 @@ def load_excel(file):
     ]
     
     df = df.dropna(subset=["Clock In", "Clock Out"])
-    df["Clock In"] = pd.to_datetime(df["Clock In"], format='%Y-%m-%d %H:%M:%S', errors='coerce')
-    df["Clock Out"] = pd.to_datetime(df["Clock Out"], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+    df["Clock In"] = pd.to_datetime(df["Clock In"], errors='coerce')
+    df["Clock Out"] = pd.to_datetime(df["Clock Out"], errors='coerce')
     df["Work Date"] = df["Clock In"].dt.date
     
     df_raw_name_column = pd.read_excel(file, sheet_name="Reports", usecols=[0], skiprows=8)
@@ -32,7 +31,7 @@ def detect_meal_violations(df):
     df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
     
     # Filtrar solo los registros donde 'Clock Out Status' es 'On Break' y 'Regular Hours' > 5
-    df_violations = df[(df["Clock Out Status"].str.lower() == "on break") & (df["Regular Hours"] > 5)].copy()
+    df_violations = df[(df["Clock Out Status"].str.contains("On Break", case=False, na=False)) & (df["Regular Hours"] > 5)].copy()
     
     # Calcular las horas totales trabajadas por día
     df_total_hours = df.groupby(["Correct Employee Name", "Work Date"]).agg(
@@ -45,12 +44,9 @@ def detect_meal_violations(df):
     # Agregar la columna de Violation
     df_violations["Violation"] = "Yes"
     
-    # Asegurar que no haya columnas duplicadas
-    df_violations = df_violations.loc[:, ~df_violations.columns.duplicated()].copy()
-    
     # Seleccionar las columnas requeridas y eliminar duplicados
     df_violations = df_violations.rename(columns={"Correct Employee Name": "Employee Name", "Work Date": "Date"})
-    df_violations = df_violations.drop_duplicates(subset=["Employee Name", "Date"])
+    df_violations = df_violations.drop_duplicates()
     df_violations = df_violations[["Employee Name", "Date", "Regular Hours", "Total_Hours_Worked", "Violation"]]
     
     return df_violations
