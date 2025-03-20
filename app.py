@@ -1,87 +1,81 @@
 import streamlit as st
-import fitz  # PyMuPDF
-import re
+import pdfplumber
+import json
 import pandas as pd
-import tempfile
-from datetime import datetime
+from io import StringIO
 
-def extract_employee_data(pdf_path):
-    """Extrae los registros de tiempo de los empleados desde el PDF."""
-    employee_data = []
-    
-    with fitz.open(pdf_path) as doc:
-        for page in doc:
-            text = page.get_text("text")
-            text = re.sub(r"\s+", " ", text)  # Normalizar espacios en blanco
-            
-            # Expresión regular para extraer registros de tiempo (Ejemplo: 12345 - John Doe - 03/18/2024 08:00 AM In)
-            matches = re.findall(r"(\b\d{3,10}\b)\s*-\s*([A-Za-z]+(?:\s+[A-Za-z]+)*)\s*-\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}\s*[APM]+)\s*(In|Out|On Break)", text)
-            
-            for emp_num, name, date, time, status in matches:
-                timestamp = datetime.strptime(f"{date} {time}", "%m/%d/%Y %I:%M %p")
-                employee_data.append({
-                    "Employee #": emp_num.strip(),
-                    "Name": name.strip(),
-                    "Date": date,
-                    "Timestamp": timestamp,
-                    "Status": status.strip()
-                })
-    
-    return pd.DataFrame(employee_data)
+def extract_text_from_pdf(pdf_file):
+    text = ""
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+    return text
 
-def analyze_meal_violations(df):
-    """Analiza los registros y determina las Meal Violations."""
-    violations = []
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"])
+def parse_employee_data(text):
+    employees = []
+    lines = text.split("\n")
     
-    grouped = df.groupby(["Employee #", "Name", "Date"])
+    current_employee = None
+    for line in lines:
+        if " - " in line and any(char.isdigit() for char in line):
+            # Detecta el inicio de un nuevo empleado
+            parts = line.split(" - ", 1)
+            employee_id = parts[0].strip()
+            employee_name = parts[1].strip()
+            if current_employee:
+                employees.append(current_employee)
+            current_employee = {
+                "id": employee_id,
+                "name": employee_name,
+                "records": []
+            }
+        elif "IN" in line and "OUT" in line:
+            # Extrae información de registros de entrada/salida
+            parts = line.split()
+            if len(parts) >= 5:
+                date = parts[-1]
+                job = parts[-3]
+                clock_in = parts[1]
+                clock_out = parts[3]
+                total_hours = float(parts[-2])
+                record = {
+                    "date": date,
+                    "job": job,
+                    "clock_in": clock_in,
+                    "clock_out": clock_out,
+                    "total_hours": total_hours
+                }
+                if current_employee:
+                    current_employee["records"].append(record)
     
-    for (emp_num, name, date), group in grouped:
-        group = group.sort_values(by="Timestamp")
-        total_worked = (group[group["Status"] == "Out"]["Timestamp"].max() - 
-                        group[group["Status"] == "In"]["Timestamp"].min()).total_seconds() / 3600.0
-        
-        took_break = any(group["Status"] == "On Break")
-        first_break_time = group[group["Status"] == "On Break"]["Timestamp"].min() if took_break else None
-        first_in_time = group[group["Status"] == "In"]["Timestamp"].min()
-        
-        violation = None
-        if total_worked > 6 and not took_break:
-            violation = "No break taken"
-        elif total_worked > 6 and first_break_time and (first_break_time - first_in_time).total_seconds() / 3600.0 > 5:
-            violation = "Break after 5th hour"
-        
-        if violation:
-            violations.append({
-                "Employee #": emp_num,
-                "Name": name,
-                "Date": date,
-                "Total Hours Worked": round(total_worked, 2),
-                "Violation": violation
-            })
+    if current_employee:
+        employees.append(current_employee)
     
-    return pd.DataFrame(violations)
+    return employees
 
-def main():
-    st.title("Meal Violation Analyzer")
-    st.write("Sube un archivo PDF con los registros de tiempo de los empleados.")
+st.title("Gestión de Registros de Empleados")
+
+uploaded_file = st.file_uploader("Sube un archivo PDF", type="pdf")
+
+if uploaded_file is not None:
+    text = extract_text_from_pdf(uploaded_file)
+    employees = parse_employee_data(text)
     
-    uploaded_file = st.file_uploader("Sube un archivo PDF", type=["pdf"])
+    st.write("### Registros Extraídos")
+    df = pd.DataFrame([
+        {
+            "ID": emp["id"],
+            "Nombre": emp["name"],
+            "Total Registros": len(emp["records"])
+        } for emp in employees
+    ])
+    st.dataframe(df)
+
+    st.write("### Detalles de los empleados")
+    for emp in employees:
+        st.write(f"**{emp['name']} (ID: {emp['id']})**")
+        emp_df = pd.DataFrame(emp["records"])
+        st.dataframe(emp_df)
     
-    if uploaded_file is not None:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-            temp_file.write(uploaded_file.getbuffer())
-            pdf_path = temp_file.name
-        
-        st.write("Procesando el archivo...")
-        employee_df = extract_employee_data(pdf_path)
-        violations_df = analyze_meal_violations(employee_df)
-        
-        if not violations_df.empty:
-            st.write("### Meal Violations Detectadas:")
-            st.dataframe(violations_df)
-        else:
-            st.write("No se encontraron Meal Violations en el archivo.")
-        
-if __name__ == "__main__":
-    main()
+    json_data = json.dumps({"employees": employees}, indent=4)
+    st.download_button("Descargar JSON", json_data, "empleados.json", "application/json")
