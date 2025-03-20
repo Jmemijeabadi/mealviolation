@@ -25,8 +25,12 @@ def load_and_analyze_data(uploaded_file):
         # Normalizar la columna "Clock Out Status" para evitar errores de formato
         df["Clock Out Status"] = df["Clock Out Status"].astype(str).str.strip().str.lower()
         
-        # Filtrar Meal Violations donde "Clock Out Status" sea "on break" y "Regular Hours" > 5
-        meal_violations = df[(df["Clock Out Status"] == "on break") & (df["Regular Hours"] > 5)]
+        # Filtrar Meal Violations asegurando que se excluyen registros incorrectos
+        meal_violations = df[
+            (df["Clock Out Status"] == "on break") &
+            (df["Regular Hours"] > 5) &
+            (df["Employee Name"].notna())
+        ]
         
         # Seleccionar columnas deseadas
         meal_violations = meal_violations[["Employee Name", "Regular Hours", "Clock In Date and Time", "Clock Out Date and Time"]]
