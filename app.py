@@ -19,18 +19,22 @@ def extract_employee_data(pdf_path):
         for emp_num, name in matches:
             if not re.search(r"\b(Job|Server|Cook|Cashier|Runner|Manager|Prep|Sanitation|Bussers|Food)\b", name, re.IGNORECASE):
                 
-                # Extraer las fechas y los registros de tiempo trabajados por día
+                # Extraer las fechas y las horas trabajadas
                 emp_section = re.findall(rf"{emp_num} - {name}(.*?)(?=\n\d{{3,10}} - |$)", text, re.DOTALL)
                 
                 if emp_section:
                     emp_text = emp_section[0]
-                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4}).*?(\d+\.\d+)", emp_text)
+                    work_matches = re.findall(r"(\d{1,2}/\d{1,2}/\d{4})\s.*?IN.*?(\d{1,2}:\d{2}[ap]m).*?OUT.*?(\d{1,2}:\d{2}[ap]m)", emp_text)
                     
-                    for date, hours in work_matches:
-                        hours = float(hours)
+                    for date, clock_in, clock_out in work_matches:
+                        # Convertir horas a formato de 24 horas para cálculos
+                        clock_in_time = pd.to_datetime(clock_in, format="%I:%M%p")
+                        clock_out_time = pd.to_datetime(clock_out, format="%I:%M%p")
+                        hours_worked = round((clock_out_time - clock_in_time).total_seconds() / 3600, 2)
+                        
                         took_break = bool(re.search(rf"{date}.*?OUT On Break", emp_text))  # Verificar si hay un descanso ese día
                         
-                        employee_data[(emp_num, name)][date].append((hours, took_break))  # Guardar horas y si tomó descanso
+                        employee_data[(emp_num, name)][date].append((hours_worked, took_break))  # Guardar horas y si tomó descanso
     
     # Evaluar Meal Violations con un cálculo más preciso
     detailed_data = []
