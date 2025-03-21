@@ -11,7 +11,7 @@ def process_excel(file):
     # Convertir fechas y horas
     df["Clock In"] = pd.to_datetime(df["Clock in Date and Time"], errors='coerce')
     df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
-    df["Date"] = df["Clock In"].dt.date
+    df["Date"] = df["Clock In"].dt.strftime('%d/%m/%Y')
 
     # Agrupar por empleado y fecha
     grouped = df.groupby(["Nombre", "Date"])
@@ -46,8 +46,9 @@ def process_excel(file):
     return pd.DataFrame(violations)
 
 # Streamlit UI
-st.title("🤖🪄Meal Violations Detector Broken Yolk")
-st.caption("By Jordan Memije AI Solution Central")
+st.title("Detección de Meal Violations")
+st.caption("Desarrollado por [Tu Nombre]")
+
 with st.expander("ℹ️ ¿Cómo se detectan las Meal Violations?"):
     st.markdown("""
     - Solo se evalúan días con **más de 6 horas trabajadas**.
