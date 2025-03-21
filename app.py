@@ -30,20 +30,17 @@ def process_excel(file):
         if not took_break:
             violations.append({
                 "Nombre": name,
-                "Date": date.strftime('%d/%m/%Y'),
-                "Regular Hours": None,
-                "Total Horas Día": round(total_hours, 2),
-                "Tipo de Violación": "No Break Taken"
+                "Date": date,
+                "Regular Hours": "No Break Taken",
+                "Total Horas Día": round(total_hours, 2)
             })
         elif has_break_over_5:
-            rows = group[(group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)]
-            rh_value = rows["Regular Hours"].max() if not rows.empty else None
+            rh_value = group[(group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)]["Regular Hours"].iloc[0]
             violations.append({
                 "Nombre": name,
-                "Date": date.strftime('%d/%m/%Y'),
-                "Regular Hours": round(rh_value, 2) if rh_value else None,
-                "Total Horas Día": round(total_hours, 2),
-                "Tipo de Violación": "Late Break"
+                "Date": date,
+                "Regular Hours": round(rh_value, 2),
+                "Total Horas Día": round(total_hours, 2)
             })
 
     return pd.DataFrame(violations)
@@ -51,12 +48,11 @@ def process_excel(file):
 # Streamlit UI
 st.title("🤖🪄Meal Violations Detector Broken Yolk")
 st.caption("By Jordan Memije AI Solution Central")
-
 with st.expander("ℹ️ ¿Cómo se detectan las Meal Violations?"):
     st.markdown("""
     - Solo se evalúan días con **más de 6 horas trabajadas**.
     - **No Break Taken**: No se registró ningún descanso (\"On break\").
-    - **Late Break**: El descanso ocurrió después de 5 horas de trabajo.
+    - **Descanso inválido**: El descanso ocurrió después de 5 horas de trabajo.
     """)
 
 file = st.file_uploader("Sube un archivo Excel de Time Card Detail", type=["xlsx"])
