@@ -27,18 +27,13 @@ def process_excel(file):
             (group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)
         ).any()
 
-        if name == "BAUMAN, PAUL" and date.strftime('%d/%m/%Y') == "07/03/2025":
-            st.write("\n---")
-            st.write(f"\U0001F41E Debug: Revisando {name} el {date.strftime('%d/%m/%Y')}")
-            st.write(group[["Clock In", "Clock Out Status", "Regular Hours"]])
-            st.write(f"Total Horas: {total_hours}, Took Break: {took_break}, Break > 5h: {has_break_over_5}")
-
         if not took_break:
             violations.append({
                 "Nombre": name,
                 "Date": date.strftime('%d/%m/%Y'),
-                "Regular Hours": "No Break Taken",
-                "Total Horas Día": round(total_hours, 2)
+                "Regular Hours": None,
+                "Total Horas Día": round(total_hours, 2),
+                "Tipo de Violación": "No Break Taken"
             })
         elif has_break_over_5:
             rows = group[(group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)]
@@ -46,8 +41,9 @@ def process_excel(file):
             violations.append({
                 "Nombre": name,
                 "Date": date.strftime('%d/%m/%Y'),
-                "Regular Hours": round(rh_value, 2) if rh_value else "-",
-                "Total Horas Día": round(total_hours, 2)
+                "Regular Hours": round(rh_value, 2) if rh_value else None,
+                "Total Horas Día": round(total_hours, 2),
+                "Tipo de Violación": "Late Break"
             })
 
     return pd.DataFrame(violations)
@@ -60,7 +56,7 @@ with st.expander("ℹ️ ¿Cómo se detectan las Meal Violations?"):
     st.markdown("""
     - Solo se evalúan días con **más de 6 horas trabajadas**.
     - **No Break Taken**: No se registró ningún descanso (\"On break\").
-    - **Descanso inválido**: El descanso ocurrió después de 5 horas de trabajo.
+    - **Late Break**: El descanso ocurrió después de 5 horas de trabajo.
     """)
 
 file = st.file_uploader("Sube un archivo Excel de Time Card Detail", type=["xlsx"])
