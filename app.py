@@ -48,6 +48,13 @@ def process_excel(file):
 # Streamlit UI
 st.title("🤖🪄Meal Violations Detector Broken Yolk")
 st.caption("By Jordan Memije AI Solution Central")
+with st.expander("ℹ️ ¿Cómo se detectan las Meal Violations?"):
+    st.markdown("""
+    - Solo se evalúan días con **más de 6 horas trabajadas**.
+    - **No Break Taken**: No se registró ningún descanso (\"On break\").
+    - **Descanso inválido**: El descanso ocurrió después de 5 horas de trabajo.
+    """)
+
 file = st.file_uploader("Sube un archivo Excel de Time Card Detail", type=["xlsx"])
 
 if file:
