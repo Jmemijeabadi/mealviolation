@@ -1,70 +1,59 @@
 import streamlit as st
 import pandas as pd
 
-# Función para cargar y analizar el archivo
-def load_and_analyze_data(uploaded_file):
-    if uploaded_file is not None:
-        df = pd.read_excel(uploaded_file, sheet_name='Reports', skiprows=8)
-        
-        # Renombrar columnas
-        df.columns = ["Raw Name", "Payroll ID", "Clock In Date and Time", "Clock Out Date and Time",
-                      "Clock Out Status", "Adjustment Count", "Regular Hours", "Regular Pay",
-                      "Overtime Hours", "Overtime Pay", "Gross Sales", "Tips"]
-        
-        # Crear una columna para almacenar el último nombre de empleado encontrado
-        df["Employee Name"] = df["Raw Name"].where(df["Payroll ID"].notna()).ffill()
-        
-        # Filtrar registros de tiempo válidos asegurando que no se pierdan nombres
-        df = df[df["Clock In Date and Time"].notna()]
-        
-        # Excluir filas donde el nombre sea un título de trabajo en lugar de un empleado
-        df = df[df["Payroll ID"].notna()]
-        
-        # Convertir tipos de datos
-        df["Clock In Date and Time"] = pd.to_datetime(df["Clock In Date and Time"], errors='coerce')
-        df["Clock Out Date and Time"] = pd.to_datetime(df["Clock Out Date and Time"], errors='coerce')
-        df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
-        
-        # Normalizar la columna "Clock Out Status" para evitar errores de formato
-        df["Clock Out Status"] = df["Clock Out Status"].astype(str).str.strip().str.lower()
-        
-        # Calcular total de horas trabajadas por día
-        df["Date"] = df["Clock In Date and Time"].dt.date
-        total_hours_per_day = df.groupby(["Employee Name", "Date"])["Regular Hours"].sum().reset_index()
-        total_hours_per_day.rename(columns={"Regular Hours": "Total Worked Hours in Day"}, inplace=True)
-        
-        # Filtrar Meal Violations asegurando que se excluyen registros incorrectos
-        meal_violations = df[
-            (df["Clock Out Status"] == "on break") &
-            (df["Regular Hours"] > 5) &
-            (df["Employee Name"].notna())
-        ]
-        
-        # Unir los datos de horas totales trabajadas por día
-        meal_violations = meal_violations.merge(total_hours_per_day, on=["Employee Name", "Date"], how="left")
-        
-        # Seleccionar columnas deseadas
-        meal_violations = meal_violations[["Employee Name", "Regular Hours", "Total Worked Hours in Day", "Clock In Date and Time", "Clock Out Date and Time"]]
-        
-        return meal_violations
-    return None
+def process_excel(file):
+    df = pd.read_excel(file, sheet_name=0, header=9)
 
-# Configuración de la aplicación Streamlit
-st.title("Meal Violations Tracker")
-st.write("Sube un archivo de Excel para analizar las Meal Violations de los empleados.")
+    # Extraer nombre real del empleado solo donde Clock in Date and Time es "-"
+    df["Nombre"] = df["Name"].where(df["Clock in Date and Time"] == "-", None)
+    df["Nombre"] = df["Nombre"].fillna(method="ffill")
 
-# Cargar archivo
-uploaded_file = st.file_uploader("Sube un archivo de Excel", type=["xls", "xlsx"])
+    # Convertir fechas y horas
+    df["Clock In"] = pd.to_datetime(df["Clock in Date and Time"], errors='coerce')
+    df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
+    df["Date"] = df["Clock In"].dt.date
 
-if uploaded_file:
-    meal_violations_df = load_and_analyze_data(uploaded_file)
-    
-    if meal_violations_df is not None and not meal_violations_df.empty:
-        st.success(f"Se encontraron {len(meal_violations_df)} Meal Violations.")
-        st.dataframe(meal_violations_df)
-        
-        # Opción para descargar los resultados
-        csv = meal_violations_df.to_csv(index=False).encode('utf-8')
-        st.download_button("Descargar resultados en CSV", data=csv, file_name="meal_violations.csv", mime="text/csv")
-    else:
-        st.warning("No se encontraron Meal Violations en el archivo cargado.")
+    # Agrupar por empleado y fecha
+    grouped = df.groupby(["Nombre", "Date"])
+    violations = []
+
+    for (name, date), group in grouped:
+        total_hours = group["Regular Hours"].sum()
+        if total_hours <= 6:
+            continue
+
+        took_break = group["Clock Out Status"].str.contains("On break", na=False).any()
+        has_break_over_5 = (
+            (group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)
+        ).any()
+
+        if not took_break:
+            violations.append({
+                "Nombre": name,
+                "Date": date,
+                "Regular Hours": "No Break Taken",
+                "Total Horas Día": round(total_hours, 2)
+            })
+        elif has_break_over_5:
+            rh_value = group[(group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)]["Regular Hours"].iloc[0]
+            violations.append({
+                "Nombre": name,
+                "Date": date,
+                "Regular Hours": round(rh_value, 2),
+                "Total Horas Día": round(total_hours, 2)
+            })
+
+    return pd.DataFrame(violations)
+
+# Streamlit UI
+st.title("Detección de Meal Violations")
+file = st.file_uploader("Sube un archivo Excel de Time Card Detail", type=["xlsx"])
+
+if file:
+    results = process_excel(file)
+    st.success("Análisis completado. Resultado:")
+    st.dataframe(results)
+
+    # Botón de descarga
+    csv = results.to_csv(index=False).encode('utf-8')
+    st.download_button("Descargar resultados en CSV", data=csv, file_name="meal_violations.csv", mime="text/csv")
