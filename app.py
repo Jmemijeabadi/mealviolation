@@ -47,7 +47,7 @@ def process_excel(file):
 
 # Streamlit UI
 st.title("Meal Violations Detector Broken Yolk")
-st.subheader("By Jordan Memije AI Solution Central")
+st.caption("By Jordan Memije AI Solution Central")
 file = st.file_uploader("Sube un archivo Excel de Time Card Detail", type=["xlsx"])
 
 if file:
