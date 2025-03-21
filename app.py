@@ -27,7 +27,7 @@ def process_excel(file):
             (group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)
         ).any()
 
-        if name == "PAUL BALMAN" and date.strftime('%d/%m/%Y') == "07/03/2025":
+        if name == "BAUMAN, PAUL" and date.strftime('%d/%m/%Y') == "07/03/2025":
             st.write("\n---")
             st.write(f"\U0001F41E Debug: Revisando {name} el {date.strftime('%d/%m/%Y')}")
             st.write(group[["Clock In", "Clock Out Status", "Regular Hours"]])
