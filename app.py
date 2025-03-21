@@ -27,19 +27,26 @@ def process_excel(file):
             (group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)
         ).any()
 
+        if name == "PAUL BALMAN" and date.strftime('%d/%m/%Y') == "07/03/2025":
+            st.write("\n---")
+            st.write(f"\U0001F41E Debug: Revisando {name} el {date.strftime('%d/%m/%Y')}")
+            st.write(group[["Clock In", "Clock Out Status", "Regular Hours"]])
+            st.write(f"Total Horas: {total_hours}, Took Break: {took_break}, Break > 5h: {has_break_over_5}")
+
         if not took_break:
             violations.append({
                 "Nombre": name,
-                "Date": date,
+                "Date": date.strftime('%d/%m/%Y'),
                 "Regular Hours": "No Break Taken",
                 "Total Horas Día": round(total_hours, 2)
             })
         elif has_break_over_5:
-            rh_value = group[(group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)]["Regular Hours"].iloc[0]
+            rows = group[(group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)]
+            rh_value = rows["Regular Hours"].max() if not rows.empty else None
             violations.append({
                 "Nombre": name,
-                "Date": date,
-                "Regular Hours": round(rh_value, 2),
+                "Date": date.strftime('%d/%m/%Y'),
+                "Regular Hours": round(rh_value, 2) if rh_value else "-",
                 "Total Horas Día": round(total_hours, 2)
             })
 
@@ -48,6 +55,7 @@ def process_excel(file):
 # Streamlit UI
 st.title("🤖🪄Meal Violations Detector Broken Yolk")
 st.caption("By Jordan Memije AI Solution Central")
+
 with st.expander("ℹ️ ¿Cómo se detectan las Meal Violations?"):
     st.markdown("""
     - Solo se evalúan días con **más de 6 horas trabajadas**.
