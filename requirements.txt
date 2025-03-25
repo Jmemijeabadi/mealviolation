@@ -5,4 +5,5 @@ watchdog
 pdfplumber
 PyPDF2
 openpyxl
+matplotlib
 
