@@ -30,20 +30,24 @@ def process_excel(file):
         # Solo considerar el primer "On break"
         on_breaks = group[group["Clock Out Status"] == "On break"]
         if on_breaks.empty:
+            overtime_value = group["Overtime Hours"].sum()
             violations.append({
                 "Nombre": name,
                 "Date": date,
                 "Regular Hours": "No Break Taken",
+                "Overtime Hours": round(overtime_value, 2),
                 "Total Horas Día": round(total_hours, 2)
             })
         else:
             first_break = on_breaks.iloc[0]
             hours_at_first_break = first_break["Total Hours"]
             if hours_at_first_break > 5:
+                overtime_value = group["Overtime Hours"].sum()
                 violations.append({
                     "Nombre": name,
                     "Date": date,
-                    "Regular Hours": round(hours_at_first_break, 2),
+                    "Regular Hours": round(first_break["Regular Hours"], 2),
+                    "Overtime Hours": round(overtime_value, 2),
                     "Total Horas Día": round(total_hours, 2)
                 })
 
@@ -61,13 +65,14 @@ with st.expander("ℹ️ ¿Cómo se detectan las Meal Violations?"):
     - **No Break Taken**: El empleado **no tomó ningún descanso** ("On break").
     - **Break inválido**: El primer descanso fue **después de 5 horas** de haber comenzado su jornada.
     - Si hay **Overtime**, este se **suma** a las horas regulares para el total diario.
+    - Se muestra el total de horas extra (**Overtime Hours**) por día.
     """)
 
 file = st.file_uploader("📤 Sube un archivo Excel de Time Card Detail", type=["xlsx"])
 
 if file:
     results = process_excel(file)
-    st.success("✅ Análisis completado. Resultado:")
+    st.success(f"✅ Análisis completado. Se encontraron {len(results)} violaciones:")
     st.dataframe(results)
 
     # Botón de descarga
