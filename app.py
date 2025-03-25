@@ -4,64 +4,77 @@ import pandas as pd
 def process_excel(file):
     df = pd.read_excel(file, sheet_name=0, header=9)
 
-    # Extraer nombre real del empleado solo donde Clock in Date and Time es "-"
+    # Extraer nombre del empleado
     df["Nombre"] = df["Name"].where(df["Clock in Date and Time"] == "-", None)
     df["Nombre"] = df["Nombre"].fillna(method="ffill")
 
-    # Convertir fechas y horas
+    # Conversión de columnas
     df["Clock In"] = pd.to_datetime(df["Clock in Date and Time"], errors='coerce')
     df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
+    df["Overtime Hours"] = pd.to_numeric(df.get("Overtime Hours", 0), errors='coerce').fillna(0)
+
+    # Sumar Overtime si existe
+    df["Total Hours"] = df["Regular Hours"]
+    df.loc[df["Overtime Hours"] > 0, "Total Hours"] += df["Overtime Hours"]
+
     df["Date"] = df["Clock In"].dt.date
 
-    # Agrupar por empleado y fecha
     grouped = df.groupby(["Nombre", "Date"])
     violations = []
 
     for (name, date), group in grouped:
-        total_hours = group["Regular Hours"].sum()
+        total_hours = group["Total Hours"].sum()
         if total_hours <= 6:
             continue
 
-        took_break = group["Clock Out Status"].str.contains("On break", na=False).any()
-        has_break_over_5 = (
-            (group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)
-        ).any()
-
-        if not took_break:
+        # Solo considerar el primer "On break"
+        on_breaks = group[group["Clock Out Status"] == "On break"]
+        if on_breaks.empty:
             violations.append({
                 "Nombre": name,
                 "Date": date,
                 "Regular Hours": "No Break Taken",
                 "Total Horas Día": round(total_hours, 2)
             })
-        elif has_break_over_5:
-            rh_value = group[(group["Clock Out Status"] == "On break") & (group["Regular Hours"] > 5)]["Regular Hours"].iloc[0]
-            violations.append({
-                "Nombre": name,
-                "Date": date,
-                "Regular Hours": round(rh_value, 2),
-                "Total Horas Día": round(total_hours, 2)
-            })
+        else:
+            first_break = on_breaks.iloc[0]
+            hours_at_first_break = first_break["Total Hours"]
+            if hours_at_first_break > 5:
+                violations.append({
+                    "Nombre": name,
+                    "Date": date,
+                    "Regular Hours": round(hours_at_first_break, 2),
+                    "Total Horas Día": round(total_hours, 2)
+                })
 
     return pd.DataFrame(violations)
 
+
 # Streamlit UI
-st.title("🤖🪄Meal Violations Detector Broken Yolk")
-st.caption("By Jordan Memije AI Solution Central")
+st.title("🤖🪄 Meal Violations Detector - Broken Yolk")
+st.caption("By Jordan Memije - AI Solution Central")
+
 with st.expander("ℹ️ ¿Cómo se detectan las Meal Violations?"):
     st.markdown("""
-    - Solo se evalúan días con **más de 6 horas trabajadas**.
-    - **No Break Taken**: No se registró ningún descanso (\"On break\").
-    - **Descanso inválido**: El descanso ocurrió después de 5 horas de trabajo.
+    ### Reglas:
+    - Se analizan solo los días donde se trabajaron **más de 6 horas**.
+    - **No Break Taken**: El empleado **no tomó ningún descanso** ("On break").
+    - **Break inválido**: El primer descanso fue **después de 5 horas** de haber comenzado su jornada.
+    - Si hay **Overtime**, este se **suma** a las horas regulares para el total diario.
     """)
 
-file = st.file_uploader("Sube un archivo Excel de Time Card Detail", type=["xlsx"])
+file = st.file_uploader("📤 Sube un archivo Excel de Time Card Detail", type=["xlsx"])
 
 if file:
     results = process_excel(file)
-    st.success("Análisis completado. Resultado:")
+    st.success("✅ Análisis completado. Resultado:")
     st.dataframe(results)
 
     # Botón de descarga
     csv = results.to_csv(index=False).encode('utf-8')
-    st.download_button("Descargar resultados en CSV", data=csv, file_name="meal_violations.csv", mime="text/csv")
+    st.download_button(
+        "⬇️ Descargar resultados en CSV",
+        data=csv,
+        file_name="meal_violations.csv",
+        mime="text/csv"
+    )
