@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 
 def process_excel(file):
     df = pd.read_excel(file, sheet_name=0, header=9)
@@ -53,29 +54,49 @@ def process_excel(file):
 
     return pd.DataFrame(violations)
 
-
-# Streamlit UI
+# ==============================
+# 🖥️ Streamlit UI
+# ==============================
+st.set_page_config(page_title="Meal Violations Detector", page_icon="🍳", layout="wide")
 st.title("🤖🪄 Meal Violations Detector - Broken Yolk")
 st.caption("By Jordan Memije - AI Solution Central")
 
 with st.expander("ℹ️ ¿Cómo se detectan las Meal Violations?"):
     st.markdown("""
-    ### Reglas:
+    ### Reglas de detección:
     - Se analizan solo los días donde se trabajaron **más de 6 horas**.
     - **No Break Taken**: El empleado **no tomó ningún descanso** ("On break").
-    - **Break inválido**: El primer descanso fue **después de 5 horas** de haber comenzado su jornada.
+    - **Break inválido**: El primer descanso fue **después de 5 horas** desde el inicio.
     - Si hay **Overtime**, este se **suma** a las horas regulares para el total diario.
     - Se muestra el total de horas extra (**Overtime Hours**) por día.
     """)
 
+# Subida de archivo
 file = st.file_uploader("📤 Sube un archivo Excel de Time Card Detail", type=["xlsx"])
 
 if file:
     results = process_excel(file)
-    st.success(f"✅ Análisis completado. Se encontraron {len(results)} violaciones:")
+    st.success(f"✅ Análisis completado. Se encontraron {len(results)} violaciones.")
+    st.subheader("📋 Detalle de Violaciones Detectadas")
     st.dataframe(results)
 
-    # Botón de descarga
+    # === Conteo por empleado
+    violation_counts = results["Nombre"].value_counts().reset_index()
+    violation_counts.columns = ["Empleado", "Número de Violaciones"]
+
+    st.subheader("📊 Violaciones por Empleado")
+    st.dataframe(violation_counts)
+
+    # === Gráfico de barras
+    fig, ax = plt.subplots()
+    ax.bar(violation_counts["Empleado"], violation_counts["Número de Violaciones"])
+    ax.set_xlabel("Empleado")
+    ax.set_ylabel("Número de Violaciones")
+    ax.set_title("📈 Total de Violaciones por Empleado")
+    plt.xticks(rotation=45, ha="right")
+    st.pyplot(fig)
+
+    # === Botón de descarga
     csv = results.to_csv(index=False).encode('utf-8')
     st.download_button(
         "⬇️ Descargar resultados en CSV",
