@@ -66,6 +66,10 @@ def process_excel(file, progress_bar=None):
 # === Configuración inicial Streamlit ===
 st.set_page_config(page_title="Meal Violations Dashboard", page_icon="🍳", layout="wide")
 
+# Sidebar
+st.sidebar.title("Menú Principal")
+menu = st.sidebar.radio("Navegación", ("Dashboard", "Configuración"))
+
 # === Estilos CSS personalizados para Freedash Style ===
 st.markdown("""
     <style>
@@ -109,83 +113,89 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # === Encabezado personalizado ===
-st.markdown("""
-    <h1 style='text-align: center; color: #343a40;'>🍳 Meal Violations Dashboard</h1>
-    <p style='text-align: center; color: #6c757d;'>Broken Yolk - By Jordan Memije</p>
-    <hr style='margin-top: 0px;'>
-""", unsafe_allow_html=True)
+if menu == "Dashboard":
+    st.markdown("""
+        <h1 style='text-align: center; color: #343a40;'>🍳 Meal Violations Dashboard</h1>
+        <p style='text-align: center; color: #6c757d;'>Broken Yolk - By Jordan Memije</p>
+        <hr style='margin-top: 0px;'>
+    """, unsafe_allow_html=True)
 
-file = st.file_uploader("📤 Sube tu archivo Excel de Time Card Detail", type=["xlsx"])
+    file = st.file_uploader("📤 Sube tu archivo Excel de Time Card Detail", type=["xlsx"])
 
-if file:
-    progress_bar = st.progress(0, text="Iniciando análisis...")
-    violations_df = process_excel(file, progress_bar)
-    progress_bar.empty()
+    if file:
+        progress_bar = st.progress(0, text="Iniciando análisis...")
+        violations_df = process_excel(file, progress_bar)
+        progress_bar.empty()
 
-    st.success('✅ Análisis completado.')
+        st.balloons()
+        st.success('✅ Análisis completado.')
 
-    total_violations = len(violations_df)
-    unique_employees = violations_df['Nombre'].nunique()
-    dates_analyzed = violations_df['Date'].nunique()
+        total_violations = len(violations_df)
+        unique_employees = violations_df['Nombre'].nunique()
+        dates_analyzed = violations_df['Date'].nunique()
 
-    st.markdown("## 📈 Resumen General")
-    col1, col2, col3 = st.columns(3)
+        st.markdown("## 📈 Resumen General")
+        col1, col2, col3 = st.columns(3)
 
-    with col1:
-        st.markdown("""
-            <div class="metric-card">
-                <div class="card-title">Violaciones Detectadas</div>
-                <div class="card-value">{}</div>
-            </div>
-        """.format(total_violations), unsafe_allow_html=True)
+        with col1:
+            st.markdown("""
+                <div class="metric-card">
+                    <div class="card-title">Violaciones Detectadas</div>
+                    <div class="card-value">{}</div>
+                </div>
+            """.format(total_violations), unsafe_allow_html=True)
 
-    with col2:
-        st.markdown("""
-            <div class="metric-card">
-                <div class="card-title">Empleados Afectados</div>
-                <div class="card-value">{}</div>
-            </div>
-        """.format(unique_employees), unsafe_allow_html=True)
+        with col2:
+            st.markdown("""
+                <div class="metric-card">
+                    <div class="card-title">Empleados Afectados</div>
+                    <div class="card-value">{}</div>
+                </div>
+            """.format(unique_employees), unsafe_allow_html=True)
 
-    with col3:
-        st.markdown("""
-            <div class="metric-card">
-                <div class="card-title">Días Analizados</div>
-                <div class="card-value">{}</div>
-            </div>
-        """.format(dates_analyzed), unsafe_allow_html=True)
+        with col3:
+            st.markdown("""
+                <div class="metric-card">
+                    <div class="card-title">Días Analizados</div>
+                    <div class="card-value">{}</div>
+                </div>
+            """.format(dates_analyzed), unsafe_allow_html=True)
 
-    st.markdown("---")
+        st.markdown("---")
 
-    st.markdown("## 📋 Detalle de Violaciones")
-    st.dataframe(violations_df, use_container_width=True)
+        st.markdown("## 📋 Detalle de Violaciones")
+        st.dataframe(violations_df, use_container_width=True)
 
-    violation_counts = violations_df["Nombre"].value_counts().reset_index()
-    violation_counts.columns = ["Empleado", "Número de Violaciones"]
+        violation_counts = violations_df["Nombre"].value_counts().reset_index()
+        violation_counts.columns = ["Empleado", "Número de Violaciones"]
 
-    st.markdown("## 📊 Violaciones por Empleado")
-    col_graph, col_table = st.columns([2, 1])
+        st.markdown("## 📊 Violaciones por Empleado")
+        col_graph, col_table = st.columns([2, 1])
 
-    with col_graph:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.barh(violation_counts["Empleado"], violation_counts["Número de Violaciones"], color="#009efb")
-        ax.set_xlabel("Número de Violaciones")
-        ax.set_ylabel("Empleado")
-        ax.set_title("Violaciones por Empleado", fontsize=14)
-        st.pyplot(fig)
+        with col_graph:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.barh(violation_counts["Empleado"], violation_counts["Número de Violaciones"], color="#009efb")
+            ax.set_xlabel("Número de Violaciones")
+            ax.set_ylabel("Empleado")
+            ax.set_title("Violaciones por Empleado", fontsize=14)
+            st.pyplot(fig)
 
-    with col_table:
-        st.dataframe(violation_counts, use_container_width=True)
+        with col_table:
+            st.dataframe(violation_counts, use_container_width=True)
 
-    st.markdown("---")
+        st.markdown("---")
 
-    csv = violations_df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="⬇️ Descargar resultados en CSV",
-        data=csv,
-        file_name="meal_violations.csv",
-        mime="text/csv"
-    )
+        csv = violations_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="⬇️ Descargar resultados en CSV",
+            data=csv,
+            file_name="meal_violations.csv",
+            mime="text/csv"
+        )
 
-else:
-    st.info("📤 Por favor sube un archivo Excel para comenzar.")
+    else:
+        st.info("📤 Por favor sube un archivo Excel para comenzar.")
+
+elif menu == "Configuración":
+    st.markdown("# ⚙️ Configuración")
+    st.info("Opciones de configuración próximamente disponibles.")
