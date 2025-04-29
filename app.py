@@ -5,7 +5,7 @@ import time
 
 # === Funciones auxiliares ===
 def process_excel(file, progress_bar=None):
-    time.sleep(0.5)  # Simula carga inicial
+    time.sleep(0.5)
     df = pd.read_excel(file, sheet_name=0, header=9)
 
     steps = [
@@ -66,107 +66,126 @@ def process_excel(file, progress_bar=None):
 # === Configuración inicial Streamlit ===
 st.set_page_config(page_title="Meal Violations Dashboard", page_icon="🍳", layout="wide")
 
-# === Estilos CSS personalizados ===
+# === Estilos CSS personalizados para Freedash Style ===
 st.markdown("""
     <style>
     body {
-        background-color: #f9f9f9;
+        background-color: #f4f6f9;
     }
-    .main {
-        background-color: #ffffff;
-        padding: 2rem;
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    header, footer {visibility: hidden;}
+    .block-container {
+        padding-top: 2rem;
     }
-    .stMetric {
-        background-color: #f0f0f5;
-        padding: 1rem;
+    .metric-card {
+        background: white;
+        padding: 20px;
         border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         text-align: center;
     }
+    .card-title {
+        font-size: 18px;
+        color: #6c757d;
+        margin-bottom: 0.5rem;
+    }
+    .card-value {
+        font-size: 30px;
+        font-weight: bold;
+        color: #343a40;
+    }
     .stButton > button {
-        background-color: #FFC107;
-        color: black;
-        border: None;
+        background-color: #009efb;
+        color: white;
         padding: 0.75rem 1.5rem;
+        border: none;
         border-radius: 8px;
         font-weight: bold;
     }
     .stButton > button:hover {
-        background-color: #ffb300;
+        background-color: #007acc;
         color: white;
     }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🍳 Meal Violations Dashboard - Broken Yolk")
-st.caption("By Jordan Memije - AI Solution Central")
+# === Encabezado personalizado ===
+st.markdown("""
+    <h1 style='text-align: center; color: #343a40;'>🍳 Meal Violations Dashboard</h1>
+    <p style='text-align: center; color: #6c757d;'>Broken Yolk - By Jordan Memije</p>
+    <hr style='margin-top: 0px;'>
+""", unsafe_allow_html=True)
 
 file = st.file_uploader("📤 Sube tu archivo Excel de Time Card Detail", type=["xlsx"])
 
-tab1, tab2 = st.tabs(["ℹ️ Instrucciones", "📊 Resultados"])
+if file:
+    progress_bar = st.progress(0, text="Iniciando análisis...")
+    violations_df = process_excel(file, progress_bar)
+    progress_bar.empty()
 
-with tab1:
-    st.markdown("""
-    ### ¿Cómo se detectan las Meal Violations?
-    - Se analizan solo los días con **más de 6 horas** trabajadas.
-    - **No Break Taken**: No se registró ningún descanso.
-    - **Break inválido**: El primer descanso fue **después de 5 horas**.
-    - **Overtime** se suma a las horas regulares.
-    """)
+    st.success('✅ Análisis completado.')
 
-with tab2:
-    if file:
-        progress_bar = st.progress(0, text="Iniciando análisis...")
-        violations_df = process_excel(file, progress_bar)
-        progress_bar.empty()
+    total_violations = len(violations_df)
+    unique_employees = violations_df['Nombre'].nunique()
+    dates_analyzed = violations_df['Date'].nunique()
 
-        st.success('✅ Análisis completado.')
+    st.markdown("## 📈 Resumen General")
+    col1, col2, col3 = st.columns(3)
 
-        total_violations = len(violations_df)
-        unique_employees = violations_df['Nombre'].nunique()
-        dates_analyzed = violations_df['Date'].nunique()
+    with col1:
+        st.markdown("""
+            <div class="metric-card">
+                <div class="card-title">Violaciones Detectadas</div>
+                <div class="card-value">{}</div>
+            </div>
+        """.format(total_violations), unsafe_allow_html=True)
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric(label="🔎 Violaciones Detectadas", value=total_violations)
-        with col2:
-            st.metric(label="👤 Empleados Afectados", value=unique_employees)
-        with col3:
-            st.metric(label="📅 Días Analizados", value=dates_analyzed)
+    with col2:
+        st.markdown("""
+            <div class="metric-card">
+                <div class="card-title">Empleados Afectados</div>
+                <div class="card-value">{}</div>
+            </div>
+        """.format(unique_employees), unsafe_allow_html=True)
 
-        st.divider()
+    with col3:
+        st.markdown("""
+            <div class="metric-card">
+                <div class="card-title">Días Analizados</div>
+                <div class="card-value">{}</div>
+            </div>
+        """.format(dates_analyzed), unsafe_allow_html=True)
 
-        st.subheader("📋 Detalle de Violaciones Detectadas")
-        st.dataframe(violations_df, use_container_width=True)
+    st.markdown("---")
 
-        violation_counts = violations_df["Nombre"].value_counts().reset_index()
-        violation_counts.columns = ["Empleado", "Número de Violaciones"]
+    st.markdown("## 📋 Detalle de Violaciones")
+    st.dataframe(violations_df, use_container_width=True)
 
-        st.divider()
-        st.subheader("📊 Violaciones por Empleado")
+    violation_counts = violations_df["Nombre"].value_counts().reset_index()
+    violation_counts.columns = ["Empleado", "Número de Violaciones"]
 
-        col_graph, col_table = st.columns([2, 1])
+    st.markdown("## 📊 Violaciones por Empleado")
+    col_graph, col_table = st.columns([2, 1])
 
-        with col_graph:
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.barh(violation_counts["Empleado"], violation_counts["Número de Violaciones"], color="#FFB347")
-            ax.set_xlabel("Número de Violaciones")
-            ax.set_ylabel("Empleado")
-            ax.set_title("Violaciones por Empleado", fontsize=14)
-            st.pyplot(fig)
+    with col_graph:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.barh(violation_counts["Empleado"], violation_counts["Número de Violaciones"], color="#009efb")
+        ax.set_xlabel("Número de Violaciones")
+        ax.set_ylabel("Empleado")
+        ax.set_title("Violaciones por Empleado", fontsize=14)
+        st.pyplot(fig)
 
-        with col_table:
-            st.dataframe(violation_counts, use_container_width=True)
+    with col_table:
+        st.dataframe(violation_counts, use_container_width=True)
 
-        st.divider()
-        csv = violations_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="⬇️ Descargar resultados en CSV",
-            data=csv,
-            file_name="meal_violations.csv",
-            mime="text/csv"
-        )
+    st.markdown("---")
 
-    else:
-        st.warning("🔔 Sube un archivo Excel para comenzar el análisis.")
+    csv = violations_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Descargar resultados en CSV",
+        data=csv,
+        file_name="meal_violations.csv",
+        mime="text/csv"
+    )
+
+else:
+    st.info("📤 Por favor sube un archivo Excel para comenzar.")
