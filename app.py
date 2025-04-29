@@ -1,10 +1,25 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import time
 
 # === Funciones auxiliares ===
-def process_excel(file):
+def process_excel(file, progress_bar=None):
+    time.sleep(0.5)  # Simula carga inicial
     df = pd.read_excel(file, sheet_name=0, header=9)
+
+    steps = [
+        ("Procesando nombres...", 0.2),
+        ("Convirtiendo fechas y horas...", 0.4),
+        ("Calculando horas totales...", 0.6),
+        ("Agrupando datos...", 0.8),
+        ("Finalizando...", 1.0)
+    ]
+
+    if progress_bar:
+        for msg, pct in steps:
+            progress_bar.progress(pct, text=msg)
+            time.sleep(0.5)
 
     df["Nombre"] = df["Name"].where(df["Clock in Date and Time"] == "-", None)
     df["Nombre"] = df["Nombre"].ffill()
@@ -102,7 +117,11 @@ with tab1:
 
 with tab2:
     if file:
-        violations_df = process_excel(file)
+        progress_bar = st.progress(0, text="Iniciando análisis...")
+        violations_df = process_excel(file, progress_bar)
+        progress_bar.empty()
+
+        st.success('✅ Análisis completado.')
 
         total_violations = len(violations_df)
         unique_employees = violations_df['Nombre'].nunique()
