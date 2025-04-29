@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 def process_excel(file):
     df = pd.read_excel(file, sheet_name=0, header=9)
 
-    # Procesamiento de datos
     df["Nombre"] = df["Name"].where(df["Clock in Date and Time"] == "-", None)
     df["Nombre"] = df["Nombre"].ffill()
 
@@ -52,13 +51,44 @@ def process_excel(file):
 # === Configuración inicial Streamlit ===
 st.set_page_config(page_title="Meal Violations Dashboard", page_icon="🍳", layout="wide")
 
+# === Estilos CSS personalizados ===
+st.markdown("""
+    <style>
+    body {
+        background-color: #f9f9f9;
+    }
+    .main {
+        background-color: #ffffff;
+        padding: 2rem;
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+    .stMetric {
+        background-color: #f0f0f5;
+        padding: 1rem;
+        border-radius: 10px;
+        text-align: center;
+    }
+    .stButton > button {
+        background-color: #FFC107;
+        color: black;
+        border: None;
+        padding: 0.75rem 1.5rem;
+        border-radius: 8px;
+        font-weight: bold;
+    }
+    .stButton > button:hover {
+        background-color: #ffb300;
+        color: white;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🍳 Meal Violations Dashboard - Broken Yolk")
 st.caption("By Jordan Memije - AI Solution Central")
 
-# Subida de archivo
 file = st.file_uploader("📤 Sube tu archivo Excel de Time Card Detail", type=["xlsx"])
 
-# Info de ayuda
 tab1, tab2 = st.tabs(["ℹ️ Instrucciones", "📊 Resultados"])
 
 with tab1:
@@ -74,7 +104,6 @@ with tab2:
     if file:
         violations_df = process_excel(file)
 
-        # === Datos resumen en cards ===
         total_violations = len(violations_df)
         unique_employees = violations_df['Nombre'].nunique()
         dates_analyzed = violations_df['Date'].nunique()
@@ -89,11 +118,9 @@ with tab2:
 
         st.divider()
 
-        # === Tabla de violaciones ===
         st.subheader("📋 Detalle de Violaciones Detectadas")
         st.dataframe(violations_df, use_container_width=True)
 
-        # === Conteo por empleado ===
         violation_counts = violations_df["Nombre"].value_counts().reset_index()
         violation_counts.columns = ["Empleado", "Número de Violaciones"]
 
@@ -113,7 +140,6 @@ with tab2:
         with col_table:
             st.dataframe(violation_counts, use_container_width=True)
 
-        # === Botón para descarga ===
         st.divider()
         csv = violations_df.to_csv(index=False).encode('utf-8')
         st.download_button(
