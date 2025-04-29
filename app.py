@@ -185,6 +185,11 @@ if menu == "Dashboard":
 
         st.markdown("---")
 
+        high_violators = violation_counts[violation_counts["Número de Violaciones"] > 10]
+        if not high_violators.empty:
+            st.error("🚨 Atención: Hay empleados con más de 10 violaciones detectadas!")
+            st.dataframe(high_violators, use_container_width=True)
+
         csv = violations_df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="⬇️ Descargar resultados en CSV",
