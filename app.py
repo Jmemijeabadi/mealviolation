@@ -21,45 +21,51 @@ def process_excel(file, progress_bar=None):
             progress_bar.progress(pct, text=msg)
             time.sleep(0.5)
 
+    # Reemplazar el nombre del empleado donde sea necesario
     df["Nombre"] = df["Name"].where(df["Clock in Date and Time"] == "-", None)
     df["Nombre"] = df["Nombre"].ffill()
 
+    # Convertir fechas y horas
     df["Clock In"] = pd.to_datetime(df["Clock in Date and Time"], errors='coerce')
     df["Regular Hours"] = pd.to_numeric(df["Regular Hours"], errors='coerce')
     df["Overtime Hours"] = pd.to_numeric(df.get("Overtime Hours", 0), errors='coerce').fillna(0)
 
+    # Calcular las horas totales
     df["Total Hours"] = df["Regular Hours"] + df["Overtime Hours"]
     df["Date"] = df["Clock In"].dt.date
 
+    # Agrupar por nombre y fecha
     grouped = df.groupby(["Nombre", "Date"])
     violations = []
 
     for (name, date), group in grouped:
         total_hours = group["Total Hours"].sum()
-        if total_hours <= 6:
-            continue
 
-        on_breaks = group.query('`Clock Out Status` == "On break"')
-        if on_breaks.empty:
-            overtime_value = group["Overtime Hours"].sum()
-            violations.append({
-                "Nombre": name,
-                "Date": date,
-                "Regular Hours": "No Break Taken",
-                "Overtime Hours": round(overtime_value, 2),
-                "Total Horas Día": round(total_hours, 2)
-            })
-        else:
-            first_break = on_breaks.iloc[0]
-            if first_break["Total Hours"] > 5:
-                overtime_value = group["Overtime Hours"].sum()
+        # Criterio 1: Si trabajó más de 6 horas sin descanso
+        if total_hours > 6:
+            on_breaks = group.query('`Clock Out Status` == "On break"')
+            if on_breaks.empty:
                 violations.append({
                     "Nombre": name,
                     "Date": date,
-                    "Regular Hours": round(first_break["Regular Hours"], 2),
-                    "Overtime Hours": round(overtime_value, 2),
+                    "Regular Hours": "No Break Taken",
+                    "Overtime Hours": round(group["Overtime Hours"].sum(), 2),
                     "Total Horas Día": round(total_hours, 2)
                 })
+        
+        # Criterio 2: Si el descanso se toma después de 5 horas de trabajo
+        elif total_hours > 5:
+            on_breaks = group.query('`Clock Out Status` == "On break"')
+            if not on_breaks.empty:
+                first_break = on_breaks.iloc[0]
+                if first_break["Regular Hours"] > 5:  # Si el primer descanso es después de 5 horas
+                    violations.append({
+                        "Nombre": name,
+                        "Date": date,
+                        "Regular Hours": round(first_break["Regular Hours"], 2),
+                        "Overtime Hours": round(group["Overtime Hours"].sum(), 2),
+                        "Total Horas Día": round(total_hours, 2)
+                    })
 
     return pd.DataFrame(violations)
 
@@ -138,28 +144,13 @@ if menu == "Dashboard":
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            st.markdown("""
-                <div class="metric-card">
-                    <div class="card-title">Violaciones Detectadas</div>
-                    <div class="card-value">{}</div>
-                </div>
-            """.format(total_violations), unsafe_allow_html=True)
+            st.markdown("""<div class="metric-card"><div class="card-title">Violaciones Detectadas</div><div class="card-value">{}</div></div>""".format(total_violations), unsafe_allow_html=True)
 
         with col2:
-            st.markdown("""
-                <div class="metric-card">
-                    <div class="card-title">Empleados Afectados</div>
-                    <div class="card-value">{}</div>
-                </div>
-            """.format(unique_employees), unsafe_allow_html=True)
+            st.markdown("""<div class="metric-card"><div class="card-title">Empleados Afectados</div><div class="card-value">{}</div></div>""".format(unique_employees), unsafe_allow_html=True)
 
         with col3:
-            st.markdown("""
-                <div class="metric-card">
-                    <div class="card-title">Días Analizados</div>
-                    <div class="card-value">{}</div>
-                </div>
-            """.format(dates_analyzed), unsafe_allow_html=True)
+            st.markdown("""<div class="metric-card"><div class="card-title">Días Analizados</div><div class="card-value">{}</div></div>""".format(dates_analyzed), unsafe_allow_html=True)
 
         st.markdown("---")
 
