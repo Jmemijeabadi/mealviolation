@@ -126,11 +126,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 if menu == "Dashboard":
-    st.markdown("""
-        <h1 style='text-align: center; color: #343a40;'>🍳 Meal Violations Dashboard</h1>
-        <p style='text-align: center; color: #6c757d;'>Broken Yolk - By Jordan Memije</p>
-        <hr style='margin-top: 0px;'>
-    """, unsafe_allow_html=True)
+   st.markdown(
+    """
+    <div style='text-align: center;'>
+        <img src='https://ruta-o-logo.png' width='80'><br>
+        <h1 style='color: #343a40;'>Meal Violations Dashboard</h1>
+        <p style='color: #6c757d;'>Broken Yolk - By Jordan Memije</p>
+    </div>
+    <hr>
+    """,
+    unsafe_allow_html=True
+)
+
 
     file = st.file_uploader("📤 Sube tu archivo Excel de Time Card Detail", type=["xlsx"])
 
