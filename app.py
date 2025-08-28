@@ -134,9 +134,7 @@ if menu == "Dashboard":
         <p style='color: #6c757d;'>Broken Yolk - By Jordan Memije</p>
     </div>
     <hr>
-    """,
-    unsafe_allow_html=True
-)
+    """, unsafe_allow_html=True)
 
 
     file = st.file_uploader("📤 Sube tu archivo Excel de Time Card Detail", type=["xlsx"])
