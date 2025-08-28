@@ -127,8 +127,8 @@ st.markdown("""
 
 if menu == "Dashboard":
     st.markdown("""
-        <h1 style='text-align: center; color: #343a40;'>🍳 Meal Violations Dashboard</h1>
-          <img src='https://images.getbento.com/accounts/84a0d88fde80e86c78e3c3b842c4ecf8/media/images/19880THE-BY-logonew-FIXED.png' width='80'>
+        <h1 style='text-align: center; color: #343a40;'>  <img src='https://images.getbento.com/accounts/84a0d88fde80e86c78e3c3b842c4ecf8/media/images/19880THE-BY-logonew-FIXED.png' width='80'> Meal Violations Dashboard</h1>
+        
         <p style='text-align: center; color: #6c757d;'>Broken Yolk - By Jordan Memije</p>
         <hr style='margin-top: 0px;'>
     """, unsafe_allow_html=True)
