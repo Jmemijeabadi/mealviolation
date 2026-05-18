@@ -23,33 +23,33 @@ def detectar_meal_violations(df: pd.DataFrame) -> pd.DataFrame:
     if "Name" in df.columns and "Clock in Date and Time" in df.columns:
         df["Nombre"] = df["Name"].where(df["Clock in Date and Time"] == "-", None)
         df["Nombre"] = df["Nombre"].ffill()
+
+        # Cambia el formato de nombre a: Apellidos Nombre
         def apellido_primero(nombre):
-    if not isinstance(nombre, str):
-        return nombre
+            if not isinstance(nombre, str):
+                return nombre
 
-    nombre = nombre.strip()
+            nombre = nombre.strip()
 
-    # Si viene como "Apellido, Nombre"
-    if "," in nombre:
-        apellido, nombre_pila = nombre.split(",", 1)
-        return f"{apellido.strip()} {nombre_pila.strip()}"
+            # Si viene como "Apellido, Nombre", lo convierte a "Apellido Nombre"
+            if "," in nombre:
+                apellido, nombre_pila = nombre.split(",", 1)
+                return f"{apellido.strip()} {nombre_pila.strip()}".strip()
 
-    partes = nombre.split()
+            partes = nombre.split()
 
-    # Si solo hay una palabra, lo deja igual
-    if len(partes) <= 1:
-        return nombre
+            # Si solo hay una palabra, se deja igual
+            if len(partes) <= 1:
+                return nombre
 
-    # Asume formato actual: Nombre Apellido(s)
-    nombre_pila = partes[0]
-    apellidos = " ".join(partes[1:])
+            # Asume formato actual: Nombre Apellido(s)
+            nombre_pila = partes[0]
+            apellidos = " ".join(partes[1:])
 
-    return f"{apellidos} {nombre_pila}".strip()
+            return f"{apellidos} {nombre_pila}".strip()
 
+        df["Nombre"] = df["Nombre"].apply(apellido_primero)
 
-df["Nombre"] = df["Nombre"].apply(apellido_primero)
-    
-    
     else:
         st.error("No se encontraron columnas 'Name' y/o 'Clock in Date and Time'. Revisa el archivo.")
         st.stop()
