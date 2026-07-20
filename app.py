@@ -19,7 +19,7 @@ except ImportError:  # La app sigue funcionando si el entorno aún no lo instal�
     plt = None
 
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 MAX_FILE_SIZE_MB = 25
 UNKNOWN_LOCATION = "No especificada"
 
@@ -898,6 +898,79 @@ def employee_option(row: pd.Series) -> str:
     return f"{row['Nombre']} — {payroll_id}"
 
 
+def render_detection_rules() -> None:
+    rules = Rules()
+    st.markdown(
+        f"""
+Esta herramienta aplica reglas operativas de auditoría. Los resultados deben
+revisarse antes de considerarse una determinación definitiva.
+
+### Cálculos utilizados
+
+```text
+Horas del turno = Σ (Regular Hours + Overtime Hours)
+
+Duración del meal = siguiente Clock In − Clock Out anterior
+
+Inicio del meal = Clock Out anterior
+
+Horas hasta el meal = Inicio del meal − primer Clock In del turno
+```
+
+Un intervalo mayor de **{rules.maximum_same_shift_gap_minutes:g} minutos** inicia
+otro turno y no se utiliza como meal del turno anterior.
+
+### Reglas actuales
+
+| Resultado | Condición |
+|---|---|
+| No aplica | Turno de {rules.meal_required_over_hours:g} horas o menos |
+| Meal válido | Gap de al menos {rules.minimum_meal_minutes:g} minutos |
+| Break after {rules.latest_meal_start_hours:g}h | Meal que inicia después de {rules.latest_meal_start_hours:g} horas |
+| Break under {rules.minimum_meal_minutes:g} min | `On break`, pero el gap no completa {rules.minimum_meal_minutes:g} minutos |
+| No Break Taken | Turno mayor de {rules.meal_required_over_hours:g} horas sin meal válido |
+
+Los límites son estrictos: exactamente **{rules.meal_required_over_hours:g} horas**
+no aplica; exactamente **{rules.latest_meal_start_hours:g} horas** no es tardío; y
+exactamente **{rules.minimum_meal_minutes:g} minutos** es un meal válido.
+
+### Cómo se evitan falsos positivos
+
+El status `On break` no se usa como única evidencia. Si existe un gap real de
+{rules.minimum_meal_minutes:g} minutos o más, se reconoce temporalmente como meal
+aunque el status sea `Undefined`, `On time` o similar. La inconsistencia se envía
+a revisión, pero no se convierte automáticamente en `No Break Taken`.
+
+### Casos que requieren revisión
+
+- Meal visible en timestamps con un status diferente de `On break`.
+- Evento `On break` de cero horas.
+- Clock Out y siguiente Clock In a la misma hora.
+- Último registro `On break` sin Clock In de regreso.
+- Diferencia mayor de 0.05 horas entre timestamps y horas reportadas.
+
+Los casos de revisión se muestran por separado y **no aumentan el total de
+violaciones**.
+        """
+    )
+
+
+if hasattr(st, "dialog"):
+
+    @st.dialog("Cómo se detectan los Meal Violations", width="large")
+    def show_detection_rules() -> None:
+        render_detection_rules()
+
+else:
+
+    def show_detection_rules() -> None:
+        with st.expander(
+            "Cómo se detectan los Meal Violations",
+            expanded=True,
+        ):
+            render_detection_rules()
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Meal Violations Dashboard",
@@ -1176,6 +1249,12 @@ def classic_main() -> None:
 
     st.sidebar.title("Menú Principal")
     menu = st.sidebar.radio("Navegación", ("Dashboard", "Configuración"))
+    if st.sidebar.button(
+        "📘 Cómo se detectan las violaciones",
+        key="open_detection_rules",
+        use_container_width=True,
+    ):
+        show_detection_rules()
 
     st.markdown(
         """
