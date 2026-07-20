@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import traceback
 from dataclasses import dataclass
 from datetime import date, datetime
 from io import BytesIO
@@ -12,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 MAX_FILE_SIZE_MB = 25
 UNKNOWN_LOCATION = "No especificada"
 
@@ -879,7 +880,41 @@ def main() -> None:
         layout="wide",
     )
 
-    st.title("🍳 Meal Violations Dashboard")
+    st.markdown(
+        """
+        <style>
+        .stApp { background-color: #f4f6f9; }
+        .block-container { padding-top: 2rem; }
+        .brand-header {
+            display: flex; align-items: center; justify-content: center;
+            gap: 14px; margin-bottom: 0.25rem;
+        }
+        .brand-header h1 { color: #343a40; margin: 0; }
+        .brand-subtitle { text-align: center; color: #6c757d; }
+        div[data-testid="stMetric"] {
+            background: white; padding: 20px; border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .stButton > button, .stDownloadButton > button,
+        [data-testid="stFormSubmitButton"] button {
+            background-color: #009efb; color: white;
+            border: none; border-radius: 8px; font-weight: bold;
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover,
+        [data-testid="stFormSubmitButton"] button:hover {
+            background-color: #007acc; color: white;
+        }
+        </style>
+        <div class="brand-header">
+            <img src="https://images.getbento.com/accounts/84a0d88fde80e86c78e3c3b842c4ecf8/media/images/19880THE-BY-logonew-FIXED.png"
+                 width="80" alt="The Broken Yolk Cafe">
+            <h1>Meal Violations Dashboard</h1>
+        </div>
+        <p class="brand-subtitle">Broken Yolk - By Jordan Memije</p>
+        <hr>
+        """,
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Los meals se detectan por el intervalo real entre Clock Out y el siguiente "
         "Clock In. El status se usa como evidencia secundaria."
@@ -887,6 +922,13 @@ def main() -> None:
 
     if "uploader_version" not in st.session_state:
         st.session_state.uploader_version = 0
+
+    if st.session_state.get("app_version") != APP_VERSION:
+        invalidate_analysis()
+        st.session_state.app_version = APP_VERSION
+
+    st.sidebar.title("Menú Principal")
+    st.sidebar.caption("Broken Yolk · Meal Compliance")
 
     if st.sidebar.button("Borrar archivo y resultados"):
         current_upload_key = f"timecard_upload_{st.session_state.uploader_version}"
@@ -971,12 +1013,15 @@ def main() -> None:
             except (ImportError, OSError) as error:
                 invalidate_analysis()
                 st.error(f"No pude leer el Excel: {error}")
-            except Exception:
+            except Exception as error:
+                technical_details = traceback.format_exc()
                 invalidate_analysis()
                 st.error(
-                    "Ocurrió un error inesperado al analizar el archivo. Verifica que sea "
-                    "un reporte Time Card Detail válido."
+                    "No pude analizar el archivo. "
+                    f"{type(error).__name__}: {error}"
                 )
+                with st.expander("Detalles técnicos del error"):
+                    st.code(technical_details, language="text")
 
     result = st.session_state.get("analysis_result")
     if result is not None and not hasattr(result, "location"):
@@ -1007,6 +1052,7 @@ def main() -> None:
     total_violations = len(result.violations)
     affected_employees = count_affected_employees(result.violations)
 
+    st.markdown("## 📈 Resumen General")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Violaciones", total_violations)
     col2.metric("Empleados afectados", affected_employees)
@@ -1075,6 +1121,7 @@ def main() -> None:
     with st.expander("Detalles técnicos del archivo"):
         st.write(
             {
+                "Versión de la app": APP_VERSION,
                 "Location": result.location,
                 "Fila de encabezado detectada": result.header_row_excel,
                 "Marcaciones válidas": result.stats["punch_rows"],
