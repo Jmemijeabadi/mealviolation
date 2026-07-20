@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 import traceback
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -12,8 +13,13 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+try:
+    import matplotlib.pyplot as plt
+except ImportError:  # La app sigue funcionando si el entorno aún no lo instaló.
+    plt = None
 
-APP_VERSION = "2.2.0"
+
+APP_VERSION = "2.3.0"
 MAX_FILE_SIZE_MB = 25
 UNKNOWN_LOCATION = "No especificada"
 
@@ -331,7 +337,10 @@ def prepare_punches(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], dict[str
     )
 
     if marker_mask.any():
-        block = marker_mask.cumsum()
+        # En Streamlit Cloud, string[pyarrow].eq() produce bool[pyarrow].
+        # PyArrow no implementa cumsum para booleanos, así que acumulamos en NumPy.
+        marker_values = marker_mask.to_numpy(dtype="int8", na_value=0)
+        block = pd.Series(marker_values.cumsum(), index=data.index, dtype="int64")
         data["_Employee Block"] = block
         data["_Employee Name"] = (
             data[COL_NAME].where(marker_mask).groupby(block).transform("first")
@@ -849,12 +858,28 @@ def render_downloads(result: AnalysisResult) -> None:
 def invalidate_analysis() -> None:
     for key in (
         "analysis_key",
+        "analysis_payload",
         "analysis_result",
         "analysis_rules",
-        "violation_employee",
-        "violation_reasons",
     ):
         st.session_state.pop(key, None)
+
+
+def result_to_payload(result: AnalysisResult) -> dict[str, Any]:
+    """Guarda sólo tipos simples/serializables en Session State."""
+    return {
+        "violations": result.violations,
+        "reviews": result.reviews,
+        "shifts": result.shifts,
+        "warnings": result.warnings,
+        "stats": result.stats,
+        "header_row_excel": result.header_row_excel,
+        "location": result.location,
+    }
+
+
+def result_from_payload(payload: dict[str, Any]) -> AnalysisResult:
+    return AnalysisResult(**payload)
 
 
 def count_affected_employees(violations: pd.DataFrame) -> int:
@@ -1137,5 +1162,252 @@ def main() -> None:
         )
 
 
+def classic_main() -> None:
+    """Interfaz original de Broken Yolk con el motor corregido."""
+    st.set_page_config(
+        page_title="Meal Violations Dashboard",
+        page_icon="🍳",
+        layout="wide",
+    )
+
+    if st.session_state.get("app_version") != APP_VERSION:
+        invalidate_analysis()
+        st.session_state["app_version"] = APP_VERSION
+
+    st.sidebar.title("Menú Principal")
+    menu = st.sidebar.radio("Navegación", ("Dashboard", "Configuración"))
+
+    st.markdown(
+        """
+        <style>
+        body { background-color: #f4f6f9; }
+        header, footer { visibility: hidden; }
+        .block-container { padding-top: 2rem; }
+        .metric-card {
+            background: white; padding: 20px; border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-align: center;
+        }
+        .card-title { font-size: 18px; color: #6c757d; margin-bottom: 0.5rem; }
+        .card-value { font-size: 30px; font-weight: bold; color: #343a40; }
+        .stButton > button, .stDownloadButton > button {
+            background-color: #009efb; color: white; padding: 0.75rem 1.5rem;
+            border: none; border-radius: 8px; font-weight: bold; cursor: pointer;
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            background-color: #007acc; color: white;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if menu == "Configuración":
+        st.markdown("# ⚙️ Configuración")
+        st.info("Opciones de configuración próximamente disponibles.")
+        return
+
+    st.markdown(
+        """
+        <h1 style='text-align: center; color: #343a40;'>
+            <img src='https://images.getbento.com/accounts/84a0d88fde80e86c78e3c3b842c4ecf8/media/images/19880THE-BY-logonew-FIXED.png'
+                 width='80' alt='The Broken Yolk Cafe'>
+            Meal Violations Dashboard
+        </h1>
+        <p style='text-align: center; color: #6c757d;'>Broken Yolk - By Jordan Memije</p>
+        <hr style='margin-top: 0px;'>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    uploaded = st.file_uploader(
+        "📤 Sube tu archivo Excel de Time Card Detail",
+        type=["xlsx"],
+        key="timecard_upload_classic",
+        on_change=invalidate_analysis,
+    )
+    if uploaded is None:
+        st.info("📤 Por favor sube un archivo Excel para comenzar.")
+        return
+
+    try:
+        file_bytes = uploaded.getvalue()
+    except Exception as error:
+        st.error(f"No pude leer el archivo cargado. {type(error).__name__}: {error}")
+        return
+
+    if len(file_bytes) > MAX_FILE_SIZE_MB * 1024 * 1024:
+        st.error(f"El archivo supera el límite de {MAX_FILE_SIZE_MB} MB.")
+        return
+
+    rules = Rules()
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    analysis_key = (APP_VERSION, file_hash, rules.cache_key())
+    progress_bar = None
+    fresh_analysis = False
+
+    try:
+        if (
+            st.session_state.get("analysis_key") != analysis_key
+            or st.session_state.get("analysis_payload") is None
+        ):
+            progress_bar = st.progress(0, text="Iniciando análisis...")
+            time.sleep(0.2)
+            progress_bar.progress(0.3, text="Leyendo y limpiando datos...")
+            analyzed = analyze_time_card(file_bytes, rules)
+            st.session_state["analysis_payload"] = result_to_payload(analyzed)
+            st.session_state["analysis_key"] = analysis_key
+            fresh_analysis = True
+        result = result_from_payload(st.session_state["analysis_payload"])
+    except DataValidationError as error:
+        if progress_bar is not None:
+            progress_bar.empty()
+        invalidate_analysis()
+        st.error(str(error))
+        return
+    except Exception as error:
+        technical_details = traceback.format_exc()
+        if progress_bar is not None:
+            progress_bar.empty()
+        invalidate_analysis()
+        st.error(f"No pude analizar el archivo. {type(error).__name__}: {error}")
+        with st.expander("Detalles técnicos del error"):
+            st.code(technical_details, language="text")
+        return
+
+    if progress_bar is not None:
+        progress_bar.progress(1.0, text="Listo ✅")
+        progress_bar.empty()
+    if fresh_analysis:
+        st.balloons()
+    st.success("✅ Análisis completado.")
+    st.info(f"📍 Location del reporte: {result.location}")
+
+    for warning in result.warnings:
+        st.warning(warning)
+
+    total_violations = len(result.violations)
+    unique_employees = count_affected_employees(result.violations)
+    dates_analyzed = result.violations["Date"].nunique() if total_violations else 0
+
+    st.markdown("## 📈 Resumen General")
+    metric_values = (
+        ("Violaciones Detectadas", total_violations),
+        ("Empleados con Violaciones", unique_employees),
+        ("Días con Violaciones", dates_analyzed),
+    )
+    for column, (title, value) in zip(st.columns(3), metric_values):
+        with column:
+            st.markdown(
+                f"""
+                <div class="metric-card">
+                    <div class="card-title">{title}</div>
+                    <div class="card-value">{value}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
+    st.markdown("## 📋 Detalle de Violaciones")
+    if result.violations.empty:
+        st.info("No se detectaron violaciones con las reglas actuales.")
+    else:
+        violations = result.violations.sort_values(["Nombre", "Date", "Turno"])
+        st.dataframe(violations, use_container_width=True, hide_index=True)
+
+        violation_counts = violations["Nombre"].value_counts().reset_index()
+        violation_counts.columns = ["Empleado", "Número de Violaciones"]
+
+        st.markdown("## 📊 Violaciones por Empleado")
+        col_graph, col_table = st.columns([2, 1])
+        with col_graph:
+            if plt is not None:
+                figure_height = max(6, min(18, len(violation_counts) * 0.4))
+                fig, ax = plt.subplots(figsize=(10, figure_height))
+                ax.barh(
+                    violation_counts["Empleado"],
+                    violation_counts["Número de Violaciones"],
+                )
+                ax.set_xlabel("Número de Violaciones")
+                ax.set_ylabel("Empleado")
+                ax.set_title("Violaciones por Empleado", fontsize=14)
+                st.pyplot(fig)
+                plt.close(fig)
+            else:
+                st.bar_chart(
+                    violation_counts.set_index("Empleado")["Número de Violaciones"]
+                )
+        with col_table:
+            st.dataframe(violation_counts, use_container_width=True, hide_index=True)
+
+        high_violators = violation_counts[
+            violation_counts["Número de Violaciones"] > 10
+        ]
+        if not high_violators.empty:
+            st.error("🚨 Atención: Hay empleados con más de 10 violaciones detectadas!")
+            st.dataframe(high_violators, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.markdown("### 🔎 Explorar por empleado")
+        employees = ["(Todos)"] + sorted(
+            violations["Nombre"].dropna().astype(str).unique().tolist()
+        )
+        selected = st.selectbox(
+            "Empleado",
+            employees,
+            key=f"classic_employee_{file_hash[:12]}",
+        )
+        if selected != "(Todos)":
+            st.dataframe(
+                violations[violations["Nombre"].astype(str) == selected].sort_values(
+                    "Date"
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.download_button(
+            label="⬇️ Descargar resultados en CSV",
+            data=safe_csv_bytes(violations),
+            file_name=f"meal_violations_{filename_slug(result.location)}.csv",
+            mime="text/csv",
+            key="classic_download_violations",
+        )
+
+    if not result.reviews.empty:
+        st.markdown("---")
+        st.markdown("## ⚠️ Casos que requieren revisión")
+        st.caption(
+            "Estos casos no se cuentan como violaciones hasta confirmar la marcación."
+        )
+        st.dataframe(result.reviews, use_container_width=True, hide_index=True)
+        st.download_button(
+            label="⬇️ Descargar casos para revisión",
+            data=safe_csv_bytes(result.reviews),
+            file_name=f"meal_reviews_{filename_slug(result.location)}.csv",
+            mime="text/csv",
+            key="classic_download_reviews",
+        )
+
+    with st.expander("Ver turnos procesados y detalles técnicos"):
+        st.dataframe(result.shifts, use_container_width=True, hide_index=True)
+        st.download_button(
+            label="⬇️ Descargar turnos procesados",
+            data=safe_csv_bytes(result.shifts),
+            file_name=f"processed_shifts_{filename_slug(result.location)}.csv",
+            mime="text/csv",
+            key="classic_download_shifts",
+        )
+        st.write(
+            {
+                "Versión de la app": APP_VERSION,
+                "Location": result.location,
+                "Fila de encabezado": result.header_row_excel,
+                "Marcaciones válidas": result.stats["punch_rows"],
+                "Turnos analizados": result.stats["work_periods"],
+            }
+        )
+
+
 if __name__ == "__main__":
-    main()
+    classic_main()
