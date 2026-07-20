@@ -19,7 +19,7 @@ except ImportError:  # La app sigue funcionando si el entorno aún no lo instal�
     plt = None
 
 
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 MAX_FILE_SIZE_MB = 25
 UNKNOWN_LOCATION = "No especificada"
 
@@ -94,6 +94,8 @@ PUNCH_ERROR_COLUMNS = [
     "Horas trabajadas antes del gap",
     "Estado MICROS",
     "Adjustment Count",
+    "Horas confiables del turno",
+    "Resultado provisional",
     "Impacto en Meal",
     "Detalle",
     "Acción recomendada",
@@ -111,6 +113,10 @@ SHIFT_COLUMNS = [
     "Duración Turno (h)",
     "Horas Trabajadas por Reloj",
     "Total Horas Reportadas",
+    "Inicio confiable posterior",
+    "Horas confiables por reloj",
+    "Horas confiables reportadas",
+    "Elegibilidad del meal",
     "Overtime Hours",
     "Meals válidos",
     "Meals confirmados",
@@ -166,6 +172,18 @@ class AnalysisResult:
     stats: dict[str, Any]
     header_row_excel: int
     location: str
+
+
+@dataclass
+class PunchAssessment:
+    """Resultado interno de la auditoría de marcaciones de un turno."""
+
+    errors: list[dict[str, Any]]
+    discarded_gap_rows: set[int]
+    ambiguous_meal_gap_rows: set[int]
+    probable_gap_rows: set[int]
+    uncertain_start_rows: set[int]
+    suspect_work_rows: set[int]
 
 
 def clean_column_name(value: Any) -> str:
@@ -557,19 +575,21 @@ def classify_punch_errors(
     base: dict[str, Any],
     rules: Rules,
     reported_hours: float,
-) -> tuple[list[dict[str, Any]], set[int], set[int], set[int]]:
-    """Clasifica errores de reloj sin convertirlos en meal violations.
+) -> PunchAssessment:
+    """Clasifica anomalías sin convertirlas automáticamente en violaciones.
 
-    Devuelve los errores visibles y tres grupos de gaps:
-    - bloqueados: no pueden usarse como meal por una anomalía clara/probable;
-    - ambiguos: podrían ser meal, pero necesitan corregir o validar el punch;
-    - probables: el tiempo parece meal aunque MICROS no tenga status de break.
+    Los gaps posteriores a punches instantáneos o rápidos se descartan como
+    evidencia de meal. Un fragmento temprano sin status puede ser trabajo real o
+    un error, por lo que su gap queda ambiguo. Ambos escenarios se conservan para
+    recalcular el turno con un inicio y horas confiables.
     """
 
     errors: list[dict[str, Any]] = []
-    blocked_gap_rows: set[int] = set()
-    ambiguous_gap_rows: set[int] = set()
+    discarded_gap_rows: set[int] = set()
+    ambiguous_meal_gap_rows: set[int] = set()
     probable_gap_rows: set[int] = set()
+    uncertain_start_rows: set[int] = set()
+    suspect_work_rows: set[int] = set()
     classified_rows: set[int] = set()
 
     def append_error(
@@ -613,6 +633,8 @@ def classify_punch_errors(
                 "Adjustment Count": int(
                     float(current["_Adjustments"]) + following_adjustments
                 ),
+                "Horas confiables del turno": pd.NA,
+                "Resultado provisional": "Pendiente de recalcular",
                 "Impacto en Meal": meal_impact,
                 "Detalle": detail,
                 "Acción recomendada": action,
@@ -630,46 +652,61 @@ def classify_punch_errors(
         gap_minutes = float(gap["minutes"])
         status_key = str(current["_Status Key"])
         explicit_break = status_key in EXPLICIT_BREAK_STATUS_KEYS
-        first_segment = row_index == 0
+        leading_segment = row_index == 0 or (
+            row_index == len(uncertain_start_rows)
+            and all(index in uncertain_start_rows for index in range(row_index))
+        )
 
         if (
-            first_segment
-            and not explicit_break
-            and current_minutes <= INSTANT_PUNCH_MAX_MINUTES
-            and current_reported <= 0.02
+            current_minutes <= INSTANT_PUNCH_MAX_MINUTES
+            and gap_minutes <= rules.maximum_same_shift_gap_minutes
         ):
-            blocked_gap_rows.add(row_index)
-            ambiguous_gap_rows.add(row_index)
+            suspect_work_rows.add(row_index)
+            if leading_segment:
+                uncertain_start_rows.add(row_index)
+                discarded_gap_rows.add(row_index)
+            elif explicit_break and gap_minutes >= rules.minimum_meal_minutes:
+                ambiguous_meal_gap_rows.add(row_index)
+            else:
+                discarded_gap_rows.add(row_index)
             remaining_hours = max(0.0, reported_hours - current_reported)
             impact = (
-                "Posible meal faltante tras corregir el punch; el gap no se contó "
-                "como meal."
+                "El gap no se contó como meal; el turno se recalculó sin este "
+                "micro-punch."
                 if remaining_hours > rules.meal_required_over_hours
-                else "El gap no se contó como meal; se debe recalcular tras corregir."
+                else "El gap no se contó como meal y el resultado quedó sujeto a revisión."
+            )
+            event_name = (
+                "Evento de break instantáneo al inicio"
+                if leading_segment and explicit_break
+                else "Clock In/Out instantáneo al inicio"
+                if leading_segment
+                else "Punch instantáneo dentro del turno"
             )
             append_error(
                 gap,
                 row_index,
-                "Clock In/Out instantáneo al inicio",
+                event_name,
                 "Alta",
                 impact,
                 (
-                    f"El primer registro duró {current_minutes:.1f} min y fue seguido "
-                    f"por otro Clock In {gap_minutes:.1f} min después. Esto parece un "
-                    "doble punch accidental, no un meal confirmado."
+                    f"El registro duró {current_minutes:.1f} min, status "
+                    f"'{current['_Status'] or 'vacío'}', y fue seguido por otro "
+                    f"Clock In {gap_minutes:.1f} min después. No demuestra trabajo "
+                    "previo suficiente para confirmar un meal."
                 ),
                 "Corregir el timecard en MICROS y volver a ejecutar el análisis.",
             )
             continue
 
         if (
-            first_segment
-            and not explicit_break
+            leading_segment
             and INSTANT_PUNCH_MAX_MINUTES < current_minutes <= RAPID_PUNCH_MAX_MINUTES
             and gap_minutes <= SUSPICIOUS_GAP_MAX_MINUTES
         ):
-            blocked_gap_rows.add(row_index)
-            ambiguous_gap_rows.add(row_index)
+            discarded_gap_rows.add(row_index)
+            uncertain_start_rows.add(row_index)
+            suspect_work_rows.add(row_index)
             append_error(
                 gap,
                 row_index,
@@ -685,7 +722,7 @@ def classify_punch_errors(
             continue
 
         if (
-            first_segment
+            leading_segment
             and not explicit_break
             and RAPID_PUNCH_MAX_MINUTES < current_minutes <= EARLY_FRAGMENT_MAX_MINUTES
             and SUSPICIOUS_GAP_MIN_MINUTES
@@ -693,14 +730,16 @@ def classify_punch_errors(
             <= SUSPICIOUS_GAP_MAX_MINUTES
             and following_hours >= LONG_FOLLOWING_SEGMENT_MIN_HOURS
         ):
+            uncertain_start_rows.add(row_index)
+            suspect_work_rows.add(row_index)
             if gap_minutes >= rules.minimum_meal_minutes:
-                blocked_gap_rows.add(row_index)
-                ambiguous_gap_rows.add(row_index)
+                ambiguous_meal_gap_rows.add(row_index)
                 impact = (
                     "El gap podría ser un meal, pero no se validó ni se convirtió en "
                     "violación hasta revisar el punch."
                 )
             else:
+                discarded_gap_rows.add(row_index)
                 impact = (
                     f"El gap fue menor de {rules.minimum_meal_minutes:g} min y no "
                     "cuenta como meal; las reglas de meal siguen aplicándose."
@@ -779,7 +818,14 @@ def classify_punch_errors(
                 "Corregir el timecard en MICROS antes de cerrar el periodo.",
             )
 
-    return errors, blocked_gap_rows, ambiguous_gap_rows, probable_gap_rows
+    return PunchAssessment(
+        errors=errors,
+        discarded_gap_rows=discarded_gap_rows,
+        ambiguous_meal_gap_rows=ambiguous_meal_gap_rows,
+        probable_gap_rows=probable_gap_rows,
+        uncertain_start_rows=uncertain_start_rows,
+        suspect_work_rows=suspect_work_rows,
+    )
 
 
 def analyze_work_periods(
@@ -794,6 +840,7 @@ def analyze_work_periods(
     tolerance_minutes = rules.timestamp_tolerance_seconds / 60
     tolerance_hours = rules.timestamp_tolerance_seconds / 3600
     eligible_count = 0
+    ambiguous_eligibility_count = 0
     inferred_meals = 0
     zero_break_reviews = 0
     zero_gap_reviews = 0
@@ -801,6 +848,7 @@ def analyze_work_periods(
     probable_meal_count = 0
     review_period_keys: set[tuple[str, int]] = set()
     punch_error_period_keys: set[tuple[str, int]] = set()
+    punch_potential_violation_keys: set[tuple[str, int]] = set()
 
     grouped = punches.groupby(["_Employee Key", "_Work Period"], sort=False)
     for (employee_key, period_number), rows in grouped:
@@ -812,10 +860,6 @@ def analyze_work_periods(
         overtime_hours = float(group["_Overtime"].sum())
         clock_hours = float(group["_Clock Hours"].sum())
         span_hours = (shift_end - shift_start).total_seconds() / 3600
-        eligible = reported_hours > rules.meal_required_over_hours + tolerance_hours
-
-        if eligible:
-            eligible_count += 1
 
         local_reviews: list[dict[str, Any]] = []
         gaps: list[dict[str, Any]] = []
@@ -846,12 +890,48 @@ def analyze_work_periods(
                 }
             )
 
-        (
-            local_punch_errors,
-            blocked_gap_rows,
-            _ambiguous_gap_rows,
-            _probable_gap_rows,
-        ) = classify_punch_errors(group, gaps, base, rules, reported_hours)
+        assessment = classify_punch_errors(group, gaps, base, rules, reported_hours)
+        local_punch_errors = assessment.errors
+        blocked_gap_rows = (
+            assessment.discarded_gap_rows | assessment.ambiguous_meal_gap_rows
+        )
+        material_punch_error = bool(blocked_gap_rows)
+
+        if assessment.uncertain_start_rows:
+            trusted_start_index = max(assessment.uncertain_start_rows) + 1
+            trusted_group = group.iloc[trusted_start_index:]
+        else:
+            trusted_start_index = 0
+            trusted_group = group
+
+        if trusted_group.empty:
+            trusted_start = shift_start
+            trusted_clock_hours = 0.0
+            trusted_reported_hours = 0.0
+        else:
+            trusted_start = trusted_group["_Clock In"].min()
+            trusted_clock_hours = float(trusted_group["_Clock Hours"].sum())
+            trusted_reported_hours = float(trusted_group["_Reported Hours"].sum())
+
+        reliable_hours = min(trusted_clock_hours, trusted_reported_hours)
+        possible_hours = max(clock_hours, reported_hours)
+        if reliable_hours > rules.meal_required_over_hours + tolerance_hours:
+            eligibility = "Requiere meal"
+            eligible = True
+            eligible_count += 1
+        elif possible_hours <= rules.meal_required_over_hours + tolerance_hours:
+            eligibility = "No aplica"
+            eligible = False
+        else:
+            eligibility = "No concluyente"
+            eligible = False
+            ambiguous_eligibility_count += 1
+
+        for gap in gaps:
+            gap["elapsed_from_trusted_start"] = (
+                gap["start"] - trusted_start
+            ).total_seconds() / 3600
+
         punch_errors.extend(local_punch_errors)
         if local_punch_errors:
             punch_error_period_keys.add((str(employee_key), int(period_number)))
@@ -867,11 +947,10 @@ def analyze_work_periods(
             if gap["status_key"] in EXPLICIT_BREAK_STATUS_KEYS
             and gap["current_clock_hours"] <= tolerance_hours
         ]
-        ambiguous_punch_meals = [
+        ambiguous_meal_candidates = [
             gap
             for gap in temporal_meals
-            if gap["row_index"] in blocked_gap_rows
-            or gap in zero_duration_break_meals
+            if gap["row_index"] in assessment.ambiguous_meal_gap_rows
         ]
         confirmed_meals = [
             gap
@@ -895,7 +974,7 @@ def analyze_work_periods(
             gap
             for gap in gaps
             if gap["row_index"] not in blocked_gap_rows
-            and gap["status_key"] in EXPLICIT_BREAK_STATUS_KEYS
+            and gap["status_key"] == "on break"
             and gap["minutes"] > tolerance_minutes
             and gap["minutes"] + tolerance_minutes < rules.minimum_meal_minutes
         ]
@@ -925,65 +1004,93 @@ def analyze_work_periods(
                     }
                 )
 
-            if blocked_gap_rows:
-                local_reviews.append(
-                    {
-                        **base,
-                        "Revisión": "Meal no concluyente por Punch Error",
-                        "Detalle": (
-                            f"Se detectaron {len(local_punch_errors)} anomalías de reloj. "
-                            "Los gaps afectados no se usaron como meals y el turno no se "
-                            "convirtió automáticamente en violación; corrige MICROS y "
-                            "vuelve a analizar."
-                        ),
-                    }
-                )
+        if material_punch_error:
+            local_reviews.append(
+                {
+                    **base,
+                    "Revisión": "Cálculo de meal afectado por Punch Error",
+                    "Detalle": (
+                        f"Se detectaron {len(local_punch_errors)} anomalías. Se usó "
+                        f"{reliable_hours:.2f} h como límite inferior confiable; los "
+                        "gaps sospechosos no se contaron automáticamente como meals ni "
+                        "como violaciones."
+                    ),
+                }
+            )
 
-            zero_breaks = group[
-                (group["_Status Key"].isin(EXPLICIT_BREAK_STATUS_KEYS))
-                & (group["_Clock Hours"] <= tolerance_hours)
-            ]
-            if not zero_breaks.empty:
-                zero_break_reviews += 1
-                local_reviews.append(
-                    {
-                        **base,
-                        "Revisión": "Evento de break de cero horas",
-                        "Detalle": (
-                            "El evento no contiene trabajo previo en su propia fila. "
-                            "Se conservó el gap real, pero conviene revisar la marcación."
-                        ),
-                    }
-                )
+        if eligibility == "No concluyente":
+            local_reviews.append(
+                {
+                    **base,
+                    "Revisión": "Elegibilidad del meal no concluyente",
+                    "Detalle": (
+                        f"Las horas confiables son {reliable_hours:.2f}, pero el máximo "
+                        f"posible es {possible_hours:.2f}. El umbral es mayor de "
+                        f"{rules.meal_required_over_hours:g} h; no se generó una "
+                        "violación automática."
+                    ),
+                }
+            )
 
-            if zero_gap_breaks:
-                zero_gap_reviews += 1
-                local_reviews.append(
-                    {
-                        **base,
-                        "Revisión": "Evento de break sin duración",
-                        "Detalle": (
-                            "El siguiente Clock In ocurre al mismo tiempo que el Clock Out "
-                            "marcado como break; no se confirmó ni se descartó el meal."
-                        ),
-                    }
-                )
+        zero_breaks = group[
+            (group["_Status Key"].isin(EXPLICIT_BREAK_STATUS_KEYS))
+            & (group["_Clock Hours"] <= tolerance_hours)
+        ]
+        if not zero_breaks.empty:
+            zero_break_reviews += 1
+            local_reviews.append(
+                {
+                    **base,
+                    "Revisión": "Evento de break de cero horas",
+                    "Detalle": (
+                        "El evento no contiene trabajo previo en su propia fila y no "
+                        "se utilizó como meal confirmado."
+                    ),
+                }
+            )
 
-            hour_difference = abs(reported_hours - clock_hours)
-            if hour_difference > 0.05:
-                local_reviews.append(
-                    {
-                        **base,
-                        "Revisión": "Horas reportadas distintas a timestamps",
-                        "Detalle": (
-                            f"Diferencia de {hour_difference:.2f} h entre horas reportadas "
-                            "y la suma de intervalos trabajados."
-                        ),
-                    }
-                )
+        if zero_gap_breaks:
+            zero_gap_reviews += 1
+            local_reviews.append(
+                {
+                    **base,
+                    "Revisión": "Evento de break sin duración",
+                    "Detalle": (
+                        "El siguiente Clock In ocurre al mismo tiempo que el Clock Out "
+                        "marcado como break; no se confirmó ni se descartó el meal."
+                    ),
+                }
+            )
+
+        hour_difference = abs(reported_hours - clock_hours)
+        if hour_difference > 0.05:
+            local_reviews.append(
+                {
+                    **base,
+                    "Revisión": "Horas reportadas distintas a timestamps",
+                    "Detalle": (
+                        f"Diferencia de {hour_difference:.2f} h entre horas reportadas "
+                        "y la suma de intervalos trabajados."
+                    ),
+                }
+            )
+
+        adjustment_count = int(group["_Adjustments"].sum())
+        if adjustment_count:
+            local_reviews.append(
+                {
+                    **base,
+                    "Revisión": "Timecard con ajustes",
+                    "Detalle": (
+                        f"MICROS reporta {adjustment_count} ajuste(s). Confirma el "
+                        "Adjustment Detail antes de cerrar el caso."
+                    ),
+                }
+            )
 
         meal_for_output: dict[str, Any] | None = valid_meals[0] if valid_meals else None
         reason: str | None = None
+        potential_reason: str | None = None
         violation_meal: dict[str, Any] | None = None
 
         if eligible:
@@ -992,25 +1099,38 @@ def analyze_work_periods(
             )
             if valid_meals:
                 first_meal = valid_meals[0]
-                if (
-                    first_meal["elapsed_before"]
-                    > rules.latest_meal_start_hours + tolerance_hours
-                ):
-                    if blocked_gap_rows:
-                        local_reviews.append(
-                            {
-                                **base,
-                                "Revisión": "Hora del meal no concluyente por Punch Error",
-                                "Detalle": (
-                                    "Un punch sospechoso puede cambiar la hora real de inicio "
-                                    "del turno. El meal posterior no se marcó automáticamente "
-                                    "como tardío; corrige MICROS y vuelve a analizar."
-                                ),
-                            }
-                        )
-                    else:
-                        reason = f"Break after {rules.latest_meal_start_hours:g}h"
-                        violation_meal = first_meal
+                ambiguous_before_first = any(
+                    gap["start"] < first_meal["start"]
+                    for gap in ambiguous_meal_candidates
+                )
+                trusted_elapsed = float(first_meal["elapsed_from_trusted_start"])
+                raw_elapsed = float(first_meal["elapsed_before"])
+                if ambiguous_before_first:
+                    local_reviews.append(
+                        {
+                            **base,
+                            "Revisión": "Primer meal no concluyente por Punch Error",
+                            "Detalle": (
+                                "Existe un gap temprano ambiguo antes del meal posterior. "
+                                "No se concluyó automáticamente que el primer meal fue tardío."
+                            ),
+                        }
+                    )
+                elif trusted_elapsed > rules.latest_meal_start_hours + tolerance_hours:
+                    potential_reason = f"Break after {rules.latest_meal_start_hours:g}h"
+                    violation_meal = first_meal
+                elif raw_elapsed > rules.latest_meal_start_hours + tolerance_hours:
+                    local_reviews.append(
+                        {
+                            **base,
+                            "Revisión": "Hora del meal no concluyente por Punch Error",
+                            "Detalle": (
+                                f"El meal inicia a {trusted_elapsed:.2f} h desde el inicio "
+                                f"confiable y a {raw_elapsed:.2f} h desde el punch original. "
+                                "El resultado cruza el límite y requiere corregir MICROS."
+                            ),
+                        }
+                    )
             elif incomplete_final_break:
                 local_reviews.append(
                     {
@@ -1023,23 +1143,64 @@ def analyze_work_periods(
                     }
                 )
             elif explicit_short_meals:
-                reason = f"Break under {rules.minimum_meal_minutes:g} min"
+                potential_reason = f"Break under {rules.minimum_meal_minutes:g} min"
                 violation_meal = explicit_short_meals[0]
                 meal_for_output = violation_meal
-            elif blocked_gap_rows:
-                # Un error de punch puede cambiar el inicio real del turno o la naturaleza
-                # del gap. Se conserva fuera del KPI hasta corregir el timecard.
-                pass
-            elif zero_duration_break_meals:
-                # El status indica break, pero la fila no contiene trabajo previo.
-                # Se mantiene como revisión y no como conclusión automática.
-                pass
+            elif ambiguous_meal_candidates:
+                local_reviews.append(
+                    {
+                        **base,
+                        "Revisión": "Meal temprano ambiguo por Punch Error",
+                        "Detalle": (
+                            "El gap podría ser un meal real o parte de una marcación "
+                            "incorrecta. No se declaró No Break Taken automáticamente."
+                        ),
+                    }
+                )
             elif zero_gap_breaks:
                 # El status indica un intento de break, pero los timestamps no permiten
                 # confirmar su duración. Se conserva como revisión manual.
                 pass
             else:
-                reason = "No Break Taken"
+                potential_reason = "No Break Taken"
+
+        if potential_reason is not None:
+            if material_punch_error:
+                punch_potential_violation_keys.add(
+                    (str(employee_key), int(period_number))
+                )
+                local_reviews.append(
+                    {
+                        **base,
+                        "Revisión": f"Posible {potential_reason} tras corregir Punch Error",
+                        "Detalle": (
+                            f"Aun descartando el punch sospechoso quedan "
+                            f"{reliable_hours:.2f} h confiables. El caso no se sumó al "
+                            "KPI automático hasta corregir o confirmar el timecard."
+                        ),
+                    }
+                )
+            else:
+                reason = potential_reason
+
+        if material_punch_error and potential_reason:
+            provisional_result = f"Posible {potential_reason} tras corregir punch"
+        elif eligibility == "No concluyente":
+            provisional_result = "Elegibilidad no concluyente; requiere revisión"
+        elif ambiguous_meal_candidates:
+            provisional_result = "Meal temprano ambiguo; requiere confirmación"
+        elif reason:
+            provisional_result = reason
+        elif probable_meals:
+            provisional_result = "Meal probable por timestamps; confirmar status"
+        elif eligibility == "Requiere meal":
+            provisional_result = "Sin violación automática con datos confiables"
+        else:
+            provisional_result = "No aplica por horas confiables"
+
+        for punch_error in local_punch_errors:
+            punch_error["Horas confiables del turno"] = round(reliable_hours, 2)
+            punch_error["Resultado provisional"] = provisional_result
 
         if reason is not None:
             violations.append(
@@ -1068,7 +1229,9 @@ def analyze_work_periods(
         reviews.extend(local_reviews)
         if local_reviews:
             review_period_keys.add((str(employee_key), int(period_number)))
-        if reason and local_punch_errors:
+        if material_punch_error and potential_reason:
+            result_label = "Punch error + posible violación"
+        elif reason and local_punch_errors:
             result_label = "Posible violación + Punch error"
         elif reason:
             result_label = "Posible violación"
@@ -1087,6 +1250,10 @@ def analyze_work_periods(
                 "Duración Turno (h)": round(span_hours, 2),
                 "Horas Trabajadas por Reloj": round(clock_hours, 2),
                 "Total Horas Reportadas": round(reported_hours, 2),
+                "Inicio confiable posterior": trusted_start,
+                "Horas confiables por reloj": round(trusted_clock_hours, 2),
+                "Horas confiables reportadas": round(trusted_reported_hours, 2),
+                "Elegibilidad del meal": eligibility,
                 "Overtime Hours": round(overtime_hours, 2),
                 "Meals válidos": len(valid_meals),
                 "Meals confirmados": len(confirmed_meals),
@@ -1107,6 +1274,7 @@ def analyze_work_periods(
     stats = {
         "work_periods": int(len(shift_df)),
         "eligible_periods": int(eligible_count),
+        "ambiguous_eligibility_periods": int(ambiguous_eligibility_count),
         "inferred_meals": int(inferred_meals),
         "confirmed_meals": int(confirmed_meal_count),
         "probable_meals": int(probable_meal_count),
@@ -1115,6 +1283,7 @@ def analyze_work_periods(
         "review_periods": int(len(review_period_keys)),
         "punch_errors": int(len(punch_error_df)),
         "punch_error_periods": int(len(punch_error_period_keys)),
+        "punch_potential_violations": int(len(punch_potential_violation_keys)),
         "instant_punch_errors": int(
             punch_error_df["Tipo de Punch Error"]
             .astype("string")
@@ -1296,8 +1465,9 @@ def render_punch_errors_table(result: AnalysisResult, key_prefix: str) -> None:
 
     st.caption(
         "Estos errores de reloj se muestran por separado. No aumentan por sí solos "
-        "el total de Meal Violations; revisa 'Impacto en Meal' para saber si el turno "
-        "también podría requerir corrección o análisis legal."
+        "el total de Meal Violations; revisa 'Horas confiables del turno' y "
+        "'Resultado provisional' para saber si podría quedar una violación después "
+        "de corregir MICROS."
     )
     filtered = result.punch_errors.copy()
     filtered["_Empleado"] = filtered.apply(employee_option, axis=1)
@@ -1356,7 +1526,12 @@ revisarse antes de considerarse una determinación definitiva.
 ### Cálculos utilizados
 
 ```text
-Horas del turno = Σ (Regular Hours + Overtime Hours)
+Horas reportadas = Σ (Regular Hours + Overtime Hours)
+
+Horas por reloj = Σ (Clock Out − Clock In)
+
+Horas confiables = menor valor entre horas reportadas y horas por reloj,
+                    después de retirar el punch inicial sospechoso
 
 Duración del meal = siguiente Clock In − Clock Out anterior
 
@@ -1376,8 +1551,13 @@ otro turno y no se utiliza como meal del turno anterior.
 | Meal confirmado | Gap de al menos {rules.minimum_meal_minutes:g} minutos con status `On break` |
 | Meal probable | Gap de al menos {rules.minimum_meal_minutes:g} minutos con otro status; requiere revisión |
 | Break after {rules.latest_meal_start_hours:g}h | Meal que inicia después de {rules.latest_meal_start_hours:g} horas |
-| Break under {rules.minimum_meal_minutes:g} min | Status explícito de break, pero el gap no completa {rules.minimum_meal_minutes:g} minutos |
+| Break under {rules.minimum_meal_minutes:g} min | Status `On break`, pero el gap no completa {rules.minimum_meal_minutes:g} minutos |
 | No Break Taken | Turno mayor de {rules.meal_required_over_hours:g} horas sin meal válido |
+
+Una violación solo entra al KPI automático cuando el cálculo no depende de un
+Punch Error material. Si el error se retira y todavía quedan más de
+{rules.meal_required_over_hours:g} horas sin meal, se muestra como **posible
+violación tras corregir punch**, fuera del KPI hasta confirmar MICROS.
 
 Los límites son estrictos: exactamente **{rules.meal_required_over_hours:g} horas**
 no aplica; exactamente **{rules.latest_meal_start_hours:g} horas** no es tardío; y
@@ -1397,6 +1577,7 @@ como Punch Error. Un evento de break de cero horas nunca confirma un meal.
 Estos casos se analizan por separado y no aumentan el KPI de Meal Violations:
 
 - Clock In y Clock Out instantáneos al inicio del turno.
+- Evento `On break`/`Undefined` de 0–5 minutos al inicio, seguido por otro Clock In.
 - Doble punch rápido seguido por otro Clock In.
 - Fragmento inicial de hasta {EARLY_FRAGMENT_MAX_MINUTES:g} min, gap de
   {SUSPICIOUS_GAP_MIN_MINUTES:g}–{SUSPICIOUS_GAP_MAX_MINUTES:g} min y después un
@@ -1404,9 +1585,9 @@ Estos casos se analizan por separado y no aumentan el KPI de Meal Violations:
 - Clock Out/In que parece meal por tiempo, pero no tiene status de break.
 
 Un gap posterior a un punch instantáneo o claramente sospechoso **no se cuenta
-como meal**. Si puede cambiar el resultado, el turno queda como Punch Error /
-Revisión hasta corregir MICROS. Una posible violación puede coexistir con un Punch
-Error cuando las reglas objetivas de duración o tiempo siguen fallando.
+como meal**. El turno se recalcula desde el siguiente Clock In y usando el menor
+valor confiable de horas. Si todavía parece faltar un meal, el resultado queda como
+Punch Error + posible violación, pero no aumenta el KPI hasta corregir MICROS.
 
 ### Casos que requieren revisión
 
@@ -1416,6 +1597,8 @@ Error cuando las reglas objetivas de duración o tiempo siguen fallando.
 - Clock Out y siguiente Clock In a la misma hora.
 - Último registro con status de break sin Clock In de regreso.
 - Diferencia mayor de 0.05 horas entre timestamps y horas reportadas.
+- Un cálculo donde una fuente supera {rules.meal_required_over_hours:g} horas y la
+  otra no; la elegibilidad queda como `No concluyente`.
 
 Los casos de revisión se muestran por separado y **no aumentan el total de
 violaciones**.
@@ -1620,14 +1803,17 @@ def main() -> None:
 
     st.markdown("## 📈 Resumen General")
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Violaciones", total_violations)
+    col1.metric("Violaciones automáticas", total_violations)
     col2.metric("Empleados afectados", affected_employees)
     col3.metric("Punch / Clock Errors", result.stats["punch_errors"])
-    col4.metric("Turnos por revisar", result.stats["review_periods"])
+    col4.metric(
+        "Posibles tras corregir punch",
+        result.stats["punch_potential_violations"],
+    )
     col5.metric("Turnos analizados", result.stats["work_periods"])
 
     if total_violations:
-        st.error(f"Se detectaron {total_violations} posibles violaciones.")
+        st.error(f"Se detectaron {total_violations} violaciones automáticas.")
     else:
         st.success("No se detectaron violaciones automáticas con las reglas seleccionadas.")
 
@@ -1636,6 +1822,13 @@ def main() -> None:
             f"Se detectaron {result.stats['punch_errors']} Punch / Clock Errors. "
             "Se muestran por separado y no se cuentan automáticamente como Meal "
             "Violations; deben corregirse o confirmarse en MICROS."
+        )
+
+    if result.stats["punch_potential_violations"]:
+        st.info(
+            f"{result.stats['punch_potential_violations']} turno(s) conservan una "
+            "posible Meal Violation después de retirar el punch sospechoso. Están "
+            "en Punch / Clock Errors y no se suman al KPI hasta corregir MICROS."
         )
 
     if result.stats["review_periods"]:
@@ -1709,10 +1902,16 @@ def main() -> None:
                 "Marcaciones válidas": result.stats["punch_rows"],
                 "Empleados": result.stats["employees"],
                 "Turnos sujetos a regla": result.stats["eligible_periods"],
+                "Elegibilidad no concluyente": result.stats[
+                    "ambiguous_eligibility_periods"
+                ],
                 "Meals confirmados": result.stats["confirmed_meals"],
                 "Meals probables por timestamps": result.stats["probable_meals"],
                 "Punch / Clock Errors": result.stats["punch_errors"],
                 "Turnos con Punch Errors": result.stats["punch_error_periods"],
+                "Posibles violaciones tras corregir punch": result.stats[
+                    "punch_potential_violations"
+                ],
                 "Punches instantáneos": result.stats["instant_punch_errors"],
                 "Fragmentos tempranos": result.stats["early_fragment_errors"],
                 "Eventos On break de cero horas": result.stats["zero_break_reviews"],
@@ -1856,14 +2055,16 @@ def classic_main() -> None:
 
     total_violations = len(result.violations)
     unique_employees = count_affected_employees(result.violations)
-    dates_analyzed = result.violations["Date"].nunique() if total_violations else 0
-
     st.markdown("## 📈 Resumen General")
     metric_values = (
-        ("Violaciones Detectadas", total_violations, ""),
+        ("Violaciones Automáticas", total_violations, ""),
         ("Empleados con Violaciones", unique_employees, ""),
-        ("Días con Violaciones", dates_analyzed, ""),
         ("Punch / Clock Errors", result.stats["punch_errors"], "punch-error-card"),
+        (
+            "Posibles tras corregir Punch",
+            result.stats["punch_potential_violations"],
+            "punch-error-card",
+        ),
     )
     for column, (title, value, card_class) in zip(st.columns(4), metric_values):
         with column:
@@ -1882,6 +2083,13 @@ def classic_main() -> None:
             f"Se detectaron {result.stats['punch_errors']} Punch / Clock Errors. "
             "Son anomalías separadas de las Meal Violations automáticas y requieren "
             "confirmación o corrección en MICROS."
+        )
+
+    if result.stats["punch_potential_violations"]:
+        st.info(
+            f"🔎 {result.stats['punch_potential_violations']} turno(s) todavía "
+            "podrían ser Meal Violations después de retirar el punch incorrecto. "
+            "No se incluyen en el KPI hasta corregir o confirmar MICROS."
         )
 
     st.markdown("---")
@@ -1999,6 +2207,12 @@ def classic_main() -> None:
                 "Turnos analizados": result.stats["work_periods"],
                 "Punch / Clock Errors": result.stats["punch_errors"],
                 "Turnos con Punch Errors": result.stats["punch_error_periods"],
+                "Posibles violaciones tras corregir punch": result.stats[
+                    "punch_potential_violations"
+                ],
+                "Elegibilidad no concluyente": result.stats[
+                    "ambiguous_eligibility_periods"
+                ],
                 "Meals confirmados": result.stats["confirmed_meals"],
                 "Meals probables": result.stats["probable_meals"],
             }
