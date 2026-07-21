@@ -50,17 +50,76 @@ def _clean_identifier(value: Any) -> str:
     return text
 
 
-def employee_dimension_map(payload: dict[str, Any]) -> dict[int, dict[str, Any]]:
-    result: dict[int, dict[str, Any]] = {}
+def _lookup_keys(prefix: str, value: Any) -> list[str]:
+    cleaned = _clean_identifier(value)
+    if not cleaned:
+        return []
+    variants = [cleaned.casefold()]
+    # Oracle may serialize the same numeric identifier as 123, "123" or
+    # "00123" across endpoints. Preserve the original and add a numeric form.
+    if cleaned.isdigit():
+        normalized_numeric = str(int(cleaned))
+        if normalized_numeric not in variants:
+            variants.append(normalized_numeric)
+    return [f"{prefix}::{variant}" for variant in variants]
+
+
+def employee_dimension_map(payload: dict[str, Any]) -> dict[Any, dict[str, Any]]:
+    """Build a multi-key employee index.
+
+    Oracle documents empNum -> employee.num, but real installations can expose
+    payroll identifiers in different numeric/string forms. Indexing all stable
+    identifiers prevents the UI from falling back to anonymous employee numbers
+    when the object-number join is unavailable or formatted differently.
+    """
+    result: dict[Any, dict[str, Any]] = {}
     for employee in payload.get("employees", []) or []:
-        if not isinstance(employee, dict) or employee.get("num") is None:
+        if not isinstance(employee, dict):
             continue
+
+        num = employee.get("num")
         try:
-            key = int(employee["num"])
+            if num is not None:
+                result[int(num)] = employee
         except (TypeError, ValueError):
-            continue
-        result[key] = employee
+            pass
+
+        for prefix, field in (
+            ("NUM", "num"),
+            ("EMPLOYEE_ID", "employeeId"),
+            ("PAYROLL", "payrollId"),
+            ("EXTERNAL_PAYROLL", "externalPayrollID"),
+            ("UUID", "uuid"),
+            ("UUID", "uuId"),
+        ):
+            for key in _lookup_keys(prefix, employee.get(field)):
+                result.setdefault(key, employee)
     return result
+
+
+def _resolve_employee(
+    employees: dict[Any, dict[str, Any]],
+    *,
+    emp_num: int,
+    card: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    if emp_num >= 0 and emp_num in employees:
+        return employees[emp_num], "employee.num"
+
+    candidates = (
+        ("NUM", card.get("empNum"), "employee.num (normalized)"),
+        ("EMPLOYEE_ID", card.get("empNum"), "employee.employeeId"),
+        ("PAYROLL", card.get("payrollID"), "employee.payrollId"),
+        ("EXTERNAL_PAYROLL", card.get("extPayrollID"), "employee.externalPayrollID"),
+        # Some organizations populate only one payroll field, so allow cross-match.
+        ("PAYROLL", card.get("extPayrollID"), "external ID matched payrollId"),
+        ("EXTERNAL_PAYROLL", card.get("payrollID"), "payrollID matched externalPayrollID"),
+    )
+    for prefix, value, method in candidates:
+        for key in _lookup_keys(prefix, value):
+            if key in employees:
+                return employees[key], method
+    return {}, "unresolved"
 
 
 def job_code_dimension_map(payload: dict[str, Any]) -> dict[int, dict[str, Any]]:
@@ -87,10 +146,38 @@ def location_dimension_map(payload: dict[str, Any]) -> dict[str, dict[str, Any]]
     return result
 
 
+def _employee_display_name(employee: dict[str, Any], card: dict[str, Any], emp_num: int) -> str:
+    first_name = str(employee.get("fName") or employee.get("firstName") or "").strip()
+    last_name = str(employee.get("lName") or employee.get("lastName") or "").strip()
+    full_name = " ".join(part for part in (first_name, last_name) if part).strip()
+    if full_name:
+        return full_name
+
+    # Defensive fallbacks for tenants that expose a combined name property.
+    for field in ("name", "employeeName", "displayName"):
+        value = str(employee.get(field) or "").strip()
+        if value:
+            return value
+
+    payroll = _clean_identifier(card.get("payrollID") or card.get("extPayrollID"))
+    if payroll:
+        return f"Empleado {payroll}"
+    return f"Empleado #{emp_num}" if emp_num >= 0 else "Empleado sin identificar"
+
+
+def _location_name(location: dict[str, Any], loc_ref: str) -> str:
+    return str(
+        location.get("name")
+        or location.get("locName")
+        or location.get("locationName")
+        or loc_ref
+    )
+
+
 def normalize_timecards(
     payloads: Iterable[dict[str, Any]],
     *,
-    employees: dict[int, dict[str, Any]] | None = None,
+    employees: dict[Any, dict[str, Any]] | None = None,
     job_codes: dict[int, dict[str, Any]] | None = None,
     locations: dict[str, dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
@@ -109,13 +196,16 @@ def normalize_timecards(
         except (TypeError, ValueError):
             jc_num = -1
 
-        employee = employees.get(emp_num, {})
+        employee, employee_match_method = _resolve_employee(
+            employees,
+            emp_num=emp_num,
+            card=card,
+        )
         job = job_codes.get(jc_num, {})
-        location = locations.get(str(loc_ref), {})
+        loc_ref_clean = _clean_identifier(loc_ref)
+        location = locations.get(loc_ref_clean, {})
 
-        first_name = str(employee.get("fName") or "").strip()
-        last_name = str(employee.get("lName") or "").strip()
-        employee_name = " ".join(x for x in (first_name, last_name) if x).strip()
+        employee_name = _employee_display_name(employee, card, emp_num)
         payroll_id = _clean_identifier(
             card.get("payrollID")
             or card.get("extPayrollID")
@@ -134,20 +224,32 @@ def normalize_timecards(
 
         rows.append(
             {
-                "location_ref": str(loc_ref),
-                "location_name": str(location.get("name") or loc_ref),
-                "location_timezone": str(location.get("tz") or ""),
+                "location_ref": loc_ref_clean,
+                "location_name": _location_name(location, loc_ref_clean),
+                "location_timezone": str(
+                    location.get("tz")
+                    or location.get("timeZone")
+                    or location.get("timezone")
+                    or ""
+                ),
                 "business_date": pd.to_datetime(bus_dt, errors="coerce").date()
                 if bus_dt
                 else pd.NaT,
                 "timecard_id": _clean_identifier(card.get("tcId")),
                 "employee_num": emp_num,
                 "employee_key": employee_key,
-                "employee_name": employee_name or f"Employee {emp_num}",
+                "employee_name": employee_name,
+                "employee_name_resolved": bool(employee),
+                "employee_match_method": employee_match_method,
                 "payroll_id": payroll_id,
                 "employee_class": str(employee.get("className") or ""),
                 "job_code_num": jc_num,
-                "job_code": str(job.get("name") or card.get("jobCodeRef") or jc_num),
+                "job_code": str(
+                    job.get("name")
+                    or job.get("jobCodeName")
+                    or card.get("jobCodeRef")
+                    or jc_num
+                ),
                 "rvc_num": _clean_identifier(card.get("rvcNum")),
                 "shift_num": _clean_identifier(card.get("shftNum")),
                 "shift_type": shift_type,

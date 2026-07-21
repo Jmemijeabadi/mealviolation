@@ -2,6 +2,18 @@
 
 Streamlit application for reviewing California meal-period compliance directly from Oracle MICROS Simphony Business Intelligence API timecards.
 
+
+## Version 3.1 display and employee-name fixes
+
+- Adds a Spanish executive summary and an **Attention required** view ordered by priority.
+- Replaces raw technical result codes with clear findings and recommended actions.
+- Adds an employee filter across all result tabs.
+- Shows concise business tables by default and keeps technical fields inside an expander.
+- Resolves employee names through `num`, `employeeId`, `payrollId`, and `externalPayrollID`, including numeric/string formatting differences.
+- Displays a name-resolution diagnostic when Oracle timecards cannot be matched to the employee catalog.
+
+After updating from 3.0, reconnect to Oracle and run the analysis again. Session results from the previous version are intentionally cleared.
+
 ## What this version changes
 
 - Replaces the required Excel upload with Oracle BI API calls.
@@ -115,10 +127,10 @@ python oracle_probe.py --loc-ref 8 --business-date 2026-07-01
 ## Tests
 
 ```bash
-pytest -q
+PYTHONPATH=. pytest -q
 ```
 
-The suite covers exact five-hour shifts, five-to-six-hour waivers, missing and late first meals, missing and late second meals, probable timestamp-only meals, open timecards, and Oracle normalization.
+The suite currently contains 18 tests and covers exact five-hour shifts, five-to-six-hour waivers, missing and late first meals, missing and late second meals, probable timestamp-only meals, open timecards, and Oracle normalization.
 
 ## Important limitations
 
