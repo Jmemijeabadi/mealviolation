@@ -1,9 +1,0 @@
-streamlit
-pymupdf
-pandas
-watchdog
-pdfplumber
-PyPDF2
-openpyxl
-matplotlib
-
