@@ -1,0 +1,30 @@
+{
+  "curUTC": "2026-07-01T23:59:59Z",
+  "locRef": "8",
+  "businessDates": [
+    {
+      "busDt": "2026-07-01",
+      "timeCardDetails": [
+        {
+          "tcId": 1001,
+          "lastUpdatedUTC": "2026-07-01T20:00:00Z",
+          "addedUTC": "2026-07-01T15:00:00Z",
+          "empNum": 2001,
+          "payrollID": "E2001",
+          "jcNum": 10,
+          "rvcNum": 1,
+          "shftNum": 1,
+          "clkInLcl": "2026-07-01T08:00:00",
+          "clkOutLcl": "2026-07-01T14:30:00",
+          "clkInUTC": "2026-07-01T15:00:00Z",
+          "clkOutUTC": "2026-07-01T21:30:00Z",
+          "clkInStatus": 84,
+          "clkOutStatus": 84,
+          "payRt": 20.0,
+          "regHrs": 6.5,
+          "shftType": 0
+        }
+      ]
+    }
+  ]
+}
