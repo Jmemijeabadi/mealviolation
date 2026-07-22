@@ -1,0 +1,5 @@
+When applying the update-only package, delete this obsolete release file if it remains:
+
+MANIFEST_v3.6.txt
+
+Do not delete UPDATE_v3.6.md; it is historical documentation.

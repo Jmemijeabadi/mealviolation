@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+.streamlit/secrets.toml
+*.pyc
+*.pyo
+.DS_Store
+.streamlit/bi_secrets.toml
+.streamlit/labor_secrets.toml
+micros_*_report.json

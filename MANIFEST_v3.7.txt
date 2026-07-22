@@ -1,0 +1,27 @@
+Meal Violations Dashboard 3.7.0
+================================
+
+Production direction
+- Oracle Business Intelligence API remains the primary data source.
+- Labor Management remains optional and separate.
+
+Main changes
+- Per-location coverage summary includes selected locations with zero timecards.
+- Candidate exposure is reported separately from validated/verified premium.
+- Structural zero-duration On Break markers are not Punch Errors.
+- Historical missing Clock Out status is distinct from currently open timecards.
+- Punch Review rows include issue type and detail.
+- Review summary counts unique workdays by actionable category.
+- Probable-meal and second-meal queues are separate.
+- Full snapshot schema 1.1 includes coverage and quality evidence.
+- Anonymized executive JSON export is available.
+
+Validation
+- 68 automated tests passed.
+- Python source compiled successfully.
+- Full-audit regression retained 109 candidates and $2,148.90 candidate exposure.
+
+Security
+- No live credentials or tokens are included.
+- Full snapshots remain sensitive.
+- Executive JSON excludes employee names, Payroll IDs and raw timecards.

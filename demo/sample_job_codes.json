@@ -1,0 +1,6 @@
+{
+  "locRef": "8",
+  "jobCodes": [
+    {"num": 10, "name": "Server", "lbrCatNum": 1, "lbrCatName": "FOH"}
+  ]
+}

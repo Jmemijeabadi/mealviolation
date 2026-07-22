@@ -1,0 +1,2 @@
+employee_key,classification,first_meal_waiver,second_meal_waiver,on_duty_meal_agreement,effective_date,expiration_date,document_reference,verified_by,notes
+12345,NON_EXEMPT,false,false,false,2026-01-01,,HRIS-123,HR Manager,
