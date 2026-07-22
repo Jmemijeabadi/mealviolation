@@ -134,3 +134,25 @@ def test_workday_record_without_verification_is_not_trusted() -> None:
     configs = {"A": [WorkdayConfigRecord(location_ref="A", workday_start=time(4, 0))]}
     result = assign_legal_workdays(df, workday_configs=configs)
     assert not bool(result.iloc[0]["workday_config_verified"])
+
+
+def test_source_coverage_treats_successful_empty_oracle_response_as_present() -> None:
+    from compliance.validation import build_source_coverage
+
+    coverage = build_source_coverage(
+        [
+            {
+                "locRef": "BYC301",
+                "_requestedBusDt": "2026-07-01",
+                "_includeAdjustmentsRequested": True,
+                "businessDates": [],
+            }
+        ],
+        expected_locations=["BYC301"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+    )
+
+    assert len(coverage) == 1
+    assert bool(coverage.iloc[0]["Response Present"]) is True
+    assert int(coverage.iloc[0]["Timecards Returned"]) == 0

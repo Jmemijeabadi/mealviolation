@@ -56,6 +56,7 @@ def create_snapshot_bytes(
         "raw_timecards": _records(bundle.raw_timecards),
         "workdays": _records(bundle.workdays),
         "violations": _records(bundle.violations),
+        "candidates": _records(bundle.candidates),
         "reviews": _records(bundle.reviews),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")

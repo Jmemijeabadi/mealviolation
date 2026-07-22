@@ -1,6 +1,6 @@
 # Meal Violations Dashboard — Oracle MICROS Simphony
 
-Versión **3.4.0** del dashboard interno de Broken Yolk para detectar y auditar Meal Violations desde Oracle MICROS Simphony Business Intelligence API.
+Versión **3.5.0** del dashboard interno de Broken Yolk para detectar y auditar Meal Violations desde Oracle MICROS Simphony Business Intelligence API.
 
 La aplicación conserva los controles avanzados de workday, clasificación, waivers, reconciliación y ajustes manuales, pero la interfaz principal vuelve al objetivo operativo original:
 
@@ -10,17 +10,20 @@ La aplicación conserva los controles avanzados de workday, clasificación, waiv
 
 La pantalla abre con cuatro indicadores:
 
-- Meal Violations.
-- Empleados afectados.
+- posibles Meal Violations detectadas por marcación;
+- empleados señalados;
+- hallazgos pendientes de validación administrativa;
 - Punch Errors.
-- Jornadas analizadas.
+
+Los patrones detectados ya no desaparecen cuando faltan clasificación, workday o controles administrativos. Se muestran con estado **Pendiente de validación** hasta completar esos controles.
 
 La tabla principal presenta una fila por empleado:
 
 - nombre;
 - Payroll ID;
-- número de Meal Violations;
+- número de posibles Meal Violations;
 - razón principal;
+- estado de validación;
 - desglose por razón;
 - fechas afectadas;
 - ubicación.
@@ -146,8 +149,16 @@ streamlit run app.py
 PYTHONPATH=. pytest -q
 ```
 
-La versión 3.4 incluye **50 pruebas automatizadas**. Además de las pruebas del motor, incluye validación del nuevo resumen de Meal Violations por empleado, razones, fechas y separación de empleados que comparten el mismo nombre.
+La versión 3.5 incluye **52 pruebas automatizadas**. Se agregaron pruebas para conservar hallazgos bajo controles estrictos y para distinguir una respuesta Oracle válida con cero timecards de una respuesta realmente faltante.
 
 ## Alcance
 
 La aplicación identifica presuntas violaciones a partir de la información disponible en MICROS. Un meal compatible por timestamps no demuestra por sí solo que fue duty-free. Los waivers, clasificaciones y acuerdos requieren evidencia operativa o documental.
+
+
+## Corrección 3.5
+
+- Conserva cada hallazgo por marcación en `bundle.candidates`.
+- Mantiene `bundle.violations` como el subconjunto con controles completos.
+- Corrige la cobertura API: una respuesta exitosa con cero timecards ya no se marca como ausencia de respuesta.
+- El dashboard muestra posibles Meal Violations y su estado, en lugar de mostrar cero de forma engañosa.

@@ -281,13 +281,18 @@ def build_violation_employee_summary(violations: pd.DataFrame) -> pd.DataFrame:
         "Affected Days",
         "Affected Dates",
         "Locations",
+        "Pending Validation",
+        "Ready Findings",
+        "Status",
     ]
     if violations.empty:
         return pd.DataFrame(columns=columns)
 
     source = _with_employee_group(violations)
     code_column = (
-        "Presumed Violation"
+        "Candidate Violation"
+        if "Candidate Violation" in source.columns
+        else "Presumed Violation"
         if "Presumed Violation" in source.columns
         else "Violation"
     )
@@ -353,6 +358,18 @@ def build_violation_employee_summary(violations: pd.DataFrame) -> pd.DataFrame:
             (str(value).strip() for value in group["Payroll ID"] if str(value).strip()),
             "",
         )
+        pending_series = group.get(
+            "Pending Validation", pd.Series(False, index=group.index)
+        ).fillna(False).astype(bool)
+        pending_count = int(pending_series.sum())
+        ready_count = int(len(group) - pending_count)
+        status = (
+            "Pendiente de validación"
+            if pending_count and not ready_count
+            else "Mixto: revisar y validar"
+            if pending_count and ready_count
+            else "Detectado por marcación"
+        )
         rows.append(
             {
                 "Employee Group": str(employee_group),
@@ -364,6 +381,9 @@ def build_violation_employee_summary(violations: pd.DataFrame) -> pd.DataFrame:
                 "Affected Days": int(len(dates)),
                 "Affected Dates": ", ".join(value.isoformat() for value in dates),
                 "Locations": ", ".join(locations),
+                "Pending Validation": pending_count,
+                "Ready Findings": ready_count,
+                "Status": status,
             }
         )
 

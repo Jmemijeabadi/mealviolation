@@ -33,7 +33,7 @@ from compliance.validation import build_data_quality_report, build_source_covera
 from oracle_bi.client import OracleBIClient, OracleBIConfig, OracleBIError
 
 
-APP_VERSION = "3.4.0"
+APP_VERSION = "3.5.0"
 MAX_RANGE_DAYS = 31
 
 RESULT_LABELS = {
@@ -871,6 +871,13 @@ def _ui_employee_group(row: pd.Series) -> str:
     return "NAME::" + str(row.get("Employee") or "Empleado sin identificar").strip()
 
 
+def auditor_finding_source(bundle: AnalysisBundle) -> pd.DataFrame:
+    """Return all punch-pattern findings, including those pending validation."""
+    if hasattr(bundle, "candidates") and not bundle.candidates.empty:
+        return bundle.candidates.copy()
+    return bundle.violations.copy()
+
+
 def auditor_employee_table(summary: pd.DataFrame) -> pd.DataFrame:
     if summary.empty:
         return pd.DataFrame(
@@ -889,10 +896,11 @@ def auditor_employee_table(summary: pd.DataFrame) -> pd.DataFrame:
         {
             "Empleado": result["Employee"],
             "ID nómina": result["Payroll ID"],
-            "Meal Violations": result["Violations"],
+            "Posibles Meal Violations": result["Violations"],
             "Razón principal": result["Principal Reason Code"].map(_auditor_reason),
             "Desglose": result["Reason Breakdown"].map(_auditor_breakdown),
             "Fechas afectadas": result["Affected Dates"],
+            "Estado": result.get("Status", "Detectado por marcación"),
             "Ubicación(es)": result["Locations"],
         }
     )
@@ -909,6 +917,7 @@ def auditor_violation_details(
         "Empleado",
         "ID nómina",
         "Razón",
+        "Estado",
         "Entrada",
         "Salida",
         "Horas",
@@ -917,13 +926,14 @@ def auditor_violation_details(
         "Ubicación(es)",
         "Ajuste manual",
     ]
-    if bundle.violations.empty:
+    source = auditor_finding_source(bundle)
+    if source.empty:
         return pd.DataFrame(columns=columns)
-
-    source = bundle.violations.copy()
     source["_Employee Group"] = source.apply(_ui_employee_group, axis=1)
     code_column = (
-        "Presumed Violation"
+        "Candidate Violation"
+        if "Candidate Violation" in source.columns
+        else "Presumed Violation"
         if "Presumed Violation" in source.columns
         else "Violation"
     )
@@ -987,6 +997,11 @@ def auditor_violation_details(
                 "Empleado": row.get("Employee", ""),
                 "ID nómina": row.get("Payroll ID", ""),
                 "Razón": _auditor_reason(code),
+                "Estado": (
+                    "Pendiente de validación"
+                    if bool(row.get("Pending Validation", False))
+                    else "Detectado por marcación"
+                ),
                 "Entrada": _format_time(row.get("First Clock In")),
                 "Salida": _format_time(row.get("Last Clock Out")),
                 "Horas": round(float(row.get("Worked Hours", 0) or 0), 2),
@@ -1070,32 +1085,47 @@ def render_auditor_dashboard(
     bundle: AnalysisBundle,
     violation_summary: pd.DataFrame,
 ) -> None:
-    total_violations = int(len(bundle.violations))
+    findings = auditor_finding_source(bundle)
+    total_findings = int(len(findings))
+    pending_findings = int(
+        findings.get("Pending Validation", pd.Series(False, index=findings.index))
+        .fillna(False)
+        .astype(bool)
+        .sum()
+    ) if not findings.empty else 0
+    ready_findings = total_findings - pending_findings
     affected_employees = int(len(violation_summary))
     punch_errors = int(len(bundle.punch_errors))
     workdays = int(bundle.stats.get("workdays", len(bundle.workdays)))
 
-    if not bundle.data_quality.empty and bundle.data_quality["Blocking"].fillna(False).any():
+    if total_findings:
         st.markdown(
-            '<div class="callout callout-orange"><b>Hay controles pendientes.</b> '
-            'El sistema bloqueó conclusiones que no tienen datos suficientes. '
-            'Los casos aparecen en “Requiere revisión”.</div>',
+            f'<div class="callout callout-orange"><b>{total_findings} patrones de Meal Violation detectados.</b> '
+            f'{ready_findings} con controles completos y {pending_findings} pendientes de validación administrativa. '
+            'Los hallazgos ya no se ocultan aunque falte clasificación, waiver o configuración del workday.</div>',
+            unsafe_allow_html=True,
+        )
+    elif not bundle.data_quality.empty and bundle.data_quality["Blocking"].fillna(False).any():
+        st.markdown(
+            '<div class="callout callout-orange"><b>No se detectaron patrones de Meal Violation, pero hay controles pendientes.</b> '
+            'Revise Punch Errors y Requiere revisión antes de cerrar la auditoría.</div>',
             unsafe_allow_html=True,
         )
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Meal Violations", total_violations)
-    k2.metric("Empleados afectados", affected_employees)
-    k3.metric("Punch Errors", punch_errors)
-    k4.metric("Jornadas analizadas", workdays)
+    k1.metric("Posibles Meal Violations", total_findings)
+    k2.metric("Empleados señalados", affected_employees)
+    k3.metric("Pendientes de validación", pending_findings)
+    k4.metric("Punch Errors", punch_errors)
+    st.caption(f"{workdays:,} jornadas analizadas · {ready_findings} hallazgos con controles completos")
 
-    if total_violations == 0:
-        st.success("No se detectaron Meal Violations automáticas en el alcance consultado.")
+    if total_findings == 0:
+        st.success("No se detectaron patrones de Meal Violation en las marcaciones consultadas.")
         return
 
     chart_left, chart_right = st.columns([3, 2])
     with chart_left:
-        st.markdown("### Violaciones por empleado")
+        st.markdown("### Hallazgos por empleado")
         top = violation_summary.head(15).copy()
         chart = top.set_index("Employee")["Violations"]
         chart.index.name = "Empleado"
@@ -1103,11 +1133,13 @@ def render_auditor_dashboard(
     with chart_right:
         st.markdown("### Razones")
         code_column = (
-            "Presumed Violation"
-            if "Presumed Violation" in bundle.violations.columns
+            "Candidate Violation"
+            if "Candidate Violation" in findings.columns
+            else "Presumed Violation"
+            if "Presumed Violation" in findings.columns
             else "Violation"
         )
-        reasons = bundle.violations[code_column].astype(str).map(_auditor_reason).value_counts()
+        reasons = findings[code_column].astype(str).map(_auditor_reason).value_counts()
         st.bar_chart(reasons, horizontal=True, height=300)
 
 
@@ -1133,8 +1165,12 @@ def render_meal_violations_tab(
             for code in AUDITOR_REASON_ORDER
             if code
             in set(
-                bundle.violations.get(
-                    "Presumed Violation", bundle.violations.get("Violation", pd.Series(dtype=str))
+                auditor_finding_source(bundle).get(
+                    "Candidate Violation",
+                    auditor_finding_source(bundle).get(
+                        "Presumed Violation",
+                        auditor_finding_source(bundle).get("Violation", pd.Series(dtype=str)),
+                    ),
                 ).astype(str)
             )
         ]
@@ -1148,9 +1184,11 @@ def render_meal_violations_tab(
             code for code in available_codes if _auditor_reason(code) in selected_labels
         ]
 
-    filtered_violations = bundle.violations.copy()
+    filtered_violations = auditor_finding_source(bundle)
     code_column = (
-        "Presumed Violation"
+        "Candidate Violation"
+        if "Candidate Violation" in filtered_violations.columns
+        else "Presumed Violation"
         if "Presumed Violation" in filtered_violations.columns
         else "Violation"
     )
@@ -1169,7 +1207,7 @@ def render_meal_violations_tab(
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Meal Violations": st.column_config.NumberColumn(format="%d"),
+            "Posibles Meal Violations": st.column_config.NumberColumn(format="%d"),
         },
     )
 
@@ -1200,10 +1238,11 @@ def render_results(bundle: AnalysisBundle, *, show_advanced: bool) -> None:
     result_history = st.session_state.get("adjustment_result_history", pd.DataFrame())
     comparison = st.session_state.get("snapshot_comparison", pd.DataFrame())
 
-    violation_summary = build_violation_employee_summary(bundle.violations)
+    finding_source = auditor_finding_source(bundle)
+    violation_summary = build_violation_employee_summary(finding_source)
     employee_summary = build_employee_summary(
         workdays=bundle.workdays,
-        violations=bundle.violations,
+        violations=finding_source,
         reviews=bundle.reviews,
         punch_errors=bundle.punch_errors,
         raw_timecards=bundle.raw_timecards,
@@ -1288,8 +1327,8 @@ def render_results(bundle: AnalysisBundle, *, show_advanced: bool) -> None:
             st.dataframe(friendly_meals(bundle.meals), use_container_width=True, hide_index=True)
         with nested[2]:
             downloads = [
-                ("Meal Violations por empleado", violation_summary, "meal_violations_by_employee.csv"),
-                ("Detalle de Meal Violations", auditor_violation_details(bundle), "meal_violations_detail.csv"),
+                ("Posibles Meal Violations por empleado", violation_summary, "possible_meal_violations_by_employee.csv"),
+                ("Detalle de posibles Meal Violations", auditor_violation_details(bundle), "possible_meal_violations_detail.csv"),
                 ("Punch Errors", bundle.punch_errors, "punch_errors.csv"),
                 ("Requiere revisión", bundle.reviews, "meal_review_cases.csv"),
                 ("Ajustes con impacto", result_history, "adjustment_compliance_impact.csv"),

@@ -29,6 +29,7 @@ class AnalysisBundle:
     reconciliation: pd.DataFrame = field(default_factory=pd.DataFrame)
     coverage: pd.DataFrame = field(default_factory=pd.DataFrame)
     change_history: pd.DataFrame = field(default_factory=pd.DataFrame)
+    candidates: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def _duration_hours(start: pd.Timestamp, end: pd.Timestamp) -> float:
@@ -467,23 +468,40 @@ def analyze_workday_group(
             else:
                 _append_unique(analysis.presumed_violations, ResultCode.SECOND_MEAL_MISSING)
 
-    suppression_reasons = material_punch_error
+    # Preserve every punch-pattern finding before administrative/data-quality
+    # controls decide whether it can be treated as an automatic presumed
+    # violation. This prevents valid signals from disappearing from the auditor
+    # dashboard while keeping the final/confirmed count conservative.
+    analysis.candidate_violations = list(analysis.presumed_violations)
+
+    suppression_reasons = False
+    if material_punch_error:
+        suppression_reasons = True
+        _append_unique(analysis.blocking_reasons, ResultCode.PUNCH_ERROR)
     if classification == "UNKNOWN":
         suppression_reasons = True
+        _append_unique(analysis.blocking_reasons, ResultCode.EMPLOYEE_CLASSIFICATION_UNVERIFIED)
     if ResultCode.WORKDAY_CONFIGURATION_UNVERIFIED in analysis.reviews:
         suppression_reasons = True
+        _append_unique(analysis.blocking_reasons, ResultCode.WORKDAY_CONFIGURATION_UNVERIFIED)
     if ResultCode.MULTI_LOCATION_WORKDAY_REVIEW in analysis.reviews:
         suppression_reasons = True
+        _append_unique(analysis.blocking_reasons, ResultCode.MULTI_LOCATION_WORKDAY_REVIEW)
     if ResultCode.UNKNOWN_ORACLE_CODE in analysis.reviews:
         suppression_reasons = True
+        _append_unique(analysis.blocking_reasons, ResultCode.UNKNOWN_ORACLE_CODE)
     if global_data_blocked:
         analysis.data_blocked = True
         suppression_reasons = True
+        _append_unique(analysis.blocking_reasons, ResultCode.DATA_INTEGRITY_BLOCKED)
         _append_unique(analysis.reviews, ResultCode.DATA_INTEGRITY_BLOCKED)
 
     if suppression_reasons and analysis.presumed_violations:
         suppressed = ", ".join(code.value for code in analysis.presumed_violations)
-        analysis.details.append("Presumed violations suppressed because required data controls are incomplete: " + suppressed)
+        analysis.details.append(
+            "Punch-pattern findings retained as pending validation because required controls are incomplete: "
+            + suppressed
+        )
         analysis.presumed_violations.clear()
         _append_unique(analysis.reviews, ResultCode.INCONCLUSIVE)
 
@@ -521,6 +539,7 @@ def analyze_timecards(
             punch_errors=empty,
             meals=empty,
             raw_timecards=timecards.copy(),
+            candidates=empty,
             stats={
                 "timecards": 0,
                 "workdays": 0,
@@ -564,6 +583,7 @@ def analyze_timecards(
 
     workdays = pd.DataFrame([analysis.to_row() for analysis in analyses])
     violation_rows: list[dict[str, Any]] = []
+    candidate_rows: list[dict[str, Any]] = []
     review_rows: list[dict[str, Any]] = []
     punch_rows: list[dict[str, Any]] = []
     meal_rows: list[dict[str, Any]] = []
@@ -584,6 +604,26 @@ def analyze_timecards(
             "Last Clock Out": analysis.last_clock_out,
             "Role(s)": analysis.roles,
         }
+        for code in analysis.candidate_violations:
+            is_ready = code in analysis.presumed_violations
+            candidate_rows.append(
+                {
+                    **base,
+                    "Candidate Violation": code.value,
+                    "Presumed Violation": code.value,
+                    "Violation": code.value,
+                    "Validation Status": (
+                        "Detected — controls complete" if is_ready else "Pending administrative validation"
+                    ),
+                    "Pending Validation": not is_ready,
+                    "Blocked By": ", ".join(reason.value for reason in analysis.blocking_reasons),
+                    "Potential Premium Workday": True,
+                    "Premium Estimate": round(analysis.premium_rate or 0.0, 2),
+                    "Estimated Meal Premium": round(analysis.premium_rate or 0.0, 2),
+                    "Premium Rate Basis": analysis.premium_rate_basis,
+                    "Details": " | ".join(analysis.details),
+                }
+            )
         for code in analysis.presumed_violations:
             violation_rows.append(
                 {
@@ -621,6 +661,7 @@ def analyze_timecards(
             )
 
     violations = pd.DataFrame(violation_rows)
+    candidates = pd.DataFrame(candidate_rows)
     reviews = pd.DataFrame(review_rows)
     punch_errors = pd.DataFrame(punch_rows)
     meals = pd.DataFrame(meal_rows)
@@ -640,6 +681,14 @@ def analyze_timecards(
         "segments": int(len(timecards)),
         "workdays": int(len(analyses)),
         "employees": int(timecards["employee_key"].nunique()),
+        "candidate_violations": int(len(candidates)),
+        "pending_candidate_violations": int(
+            candidates.get("Pending Validation", pd.Series(dtype=bool)).fillna(False).sum()
+        ) if not candidates.empty else 0,
+        "candidate_workdays": int(
+            candidates[["Employee Key", "Legal Workday Date"]].drop_duplicates().shape[0]
+        ) if not candidates.empty else 0,
+        "candidate_employees": int(candidates["Employee Key"].nunique()) if not candidates.empty else 0,
         "presumed_violations": int(len(violations)),
         "automatic_violations": int(len(violations)),
         "premium_workdays": int(premium_workdays),
@@ -663,4 +712,5 @@ def analyze_timecards(
         meals=meals,
         raw_timecards=timecards.copy(),
         stats=stats,
+        candidates=candidates,
     )

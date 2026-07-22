@@ -73,8 +73,16 @@ def build_source_coverage(
         loc_ref = str(payload.get("locRef") or "")
         cur_utc = payload.get("curUTC")
         business_dates = payload.get("businessDates", []) or []
-        if not business_dates and payload.get("busDt"):
-            business_dates = [{"busDt": payload.get("busDt"), "timeCardDetails": payload.get("timeCardDetails", [])}]
+        requested_bus_dt = payload.get("_requestedBusDt") or payload.get("busDt")
+        # A successful Oracle request may legitimately return no businessDates
+        # when the location had zero timecards. The API client preserves the
+        # requested date in _requestedBusDt; count that as a present response,
+        # not as missing source coverage.
+        if not business_dates and requested_bus_dt:
+            business_dates = [{
+                "busDt": requested_bus_dt,
+                "timeCardDetails": payload.get("timeCardDetails", []) or [],
+            }]
         for item in business_dates:
             if not isinstance(item, dict):
                 continue

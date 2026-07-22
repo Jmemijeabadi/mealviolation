@@ -208,3 +208,45 @@ def test_second_meal_waiver_does_not_clear_without_confirmed_first_meal() -> Non
     }
     bundle = analyze_timecards(df, waiver_records=waivers)
     assert ResultCode.SECOND_MEAL_WAIVER_UNVERIFIED.value in codes(bundle, "Reviews")
+
+
+def test_strict_controls_retain_candidate_violation_for_auditor() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "location_ref": "BYC301",
+                "location_name": "Eastlake",
+                "business_date": date(2026, 7, 1),
+                "legal_workday_date": date(2026, 7, 1),
+                "employee_key": "100",
+                "employee_name": "Test Employee",
+                "payroll_id": "100",
+                "employee_name_resolved": True,
+                "workday_config_verified": False,
+                "business_date_match": True,
+                "workday_start": "00:00",
+                "shift_type": 0,
+                "job_code": "Cook",
+                "clock_in_local": pd.Timestamp("2026-07-01 08:00:00"),
+                "clock_out_local": pd.Timestamp("2026-07-01 15:00:00"),
+                "clock_in_status": 84,
+                "clock_out_status": 84,
+                "pay_rate": 20.0,
+                "premium_hours": 0.0,
+                "premium_pay": 0.0,
+                "adjustment_count": 0,
+                "timecard_id": "1",
+                "source_timecard_id": "1",
+                "is_primary_segment": True,
+            }
+        ]
+    )
+
+    bundle = analyze_timecards(frame, default_classification="UNKNOWN")
+
+    assert bundle.violations.empty
+    assert len(bundle.candidates) == 1
+    assert bundle.candidates.iloc[0]["Candidate Violation"] == "FIRST_MEAL_MISSING"
+    assert bool(bundle.candidates.iloc[0]["Pending Validation"]) is True
+    assert bundle.stats["candidate_violations"] == 1
+    assert bundle.stats["pending_candidate_violations"] == 1

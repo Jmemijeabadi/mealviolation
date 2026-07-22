@@ -197,6 +197,8 @@ class WorkdayAnalysis:
     meals: list[MealCandidate] = field(default_factory=list)
     result_codes: list[ResultCode] = field(default_factory=list)
     presumed_violations: list[ResultCode] = field(default_factory=list)
+    candidate_violations: list[ResultCode] = field(default_factory=list)
+    blocking_reasons: list[ResultCode] = field(default_factory=list)
     reviews: list[ResultCode] = field(default_factory=list)
     punch_errors: list[str] = field(default_factory=list)
     adjustment_count: int = 0
@@ -212,6 +214,11 @@ class WorkdayAnalysis:
     @property
     def has_presumed_meal_violation(self) -> bool:
         return bool(self.presumed_violations)
+
+    @property
+    def has_candidate_meal_violation(self) -> bool:
+        """A punch-pattern finding, including findings still pending administrative validation."""
+        return bool(self.candidate_violations)
 
     @property
     def premium_workday(self) -> bool:
@@ -237,6 +244,12 @@ class WorkdayAnalysis:
             "Meal Count": len(self.meals),
             "Confirmed Meals": sum(1 for meal in self.meals if meal.confirmed_by_punch),
             "Probable Meals": sum(1 for meal in self.meals if not meal.confirmed_by_punch and not meal.paid),
+            "Candidate Violations": ", ".join(code.value for code in self.candidate_violations),
+            "Candidate Violation Count": len(self.candidate_violations),
+            "Pending Validation Violations": ", ".join(
+                code.value for code in self.candidate_violations if code not in self.presumed_violations
+            ),
+            "Blocking Reasons": ", ".join(code.value for code in self.blocking_reasons),
             "Presumed Violations": ", ".join(code.value for code in self.presumed_violations),
             "Automatic Violations": ", ".join(code.value for code in self.presumed_violations),
             "Reviews": ", ".join(code.value for code in self.reviews),
