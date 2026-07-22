@@ -108,12 +108,17 @@ def _resolve_employee(
 
     candidates = (
         ("NUM", card.get("empNum"), "employee.num (normalized)"),
-        ("EMPLOYEE_ID", card.get("empNum"), "employee.employeeId"),
+        ("EMPLOYEE_ID", card.get("empNum"), "empNum matched employee.employeeId"),
         ("PAYROLL", card.get("payrollID"), "employee.payrollId"),
         ("EXTERNAL_PAYROLL", card.get("extPayrollID"), "employee.externalPayrollID"),
-        # Some organizations populate only one payroll field, so allow cross-match.
+        # Real tenants sometimes expose the same identifier in a different field.
+        # These fallbacks run only after Oracle's documented empNum -> num join.
         ("PAYROLL", card.get("extPayrollID"), "external ID matched payrollId"),
         ("EXTERNAL_PAYROLL", card.get("payrollID"), "payrollID matched externalPayrollID"),
+        ("EMPLOYEE_ID", card.get("payrollID"), "payrollID matched employeeId"),
+        ("EMPLOYEE_ID", card.get("extPayrollID"), "external payroll ID matched employeeId"),
+        ("PAYROLL", card.get("empNum"), "empNum matched payrollId"),
+        ("EXTERNAL_PAYROLL", card.get("empNum"), "empNum matched externalPayrollID"),
     )
     for prefix, value, method in candidates:
         for key in _lookup_keys(prefix, value):
