@@ -69,3 +69,47 @@ def test_employee_summary_counts_meals_and_adjustments() -> None:
     assert row["Adjustment Records"] == 2
     assert row["Managers Involved"] == 1
     assert row["Status"] == "Atención inmediata"
+
+
+def test_employee_summary_does_not_merge_duplicate_names_with_different_keys() -> None:
+    workdays = pd.DataFrame(
+        [
+            {
+                "Employee Key": "100",
+                "Employee": "Alex Smith",
+                "Payroll ID": "100",
+                "Business Date": date(2026, 7, 1),
+                "Worked Hours": 6.5,
+                "Confirmed Meals": 0,
+                "Probable Meals": 0,
+                "Potential Premium Workday": True,
+                "Estimated Meal Premium": 20.0,
+            },
+            {
+                "Employee Key": "200",
+                "Employee": "Alex Smith",
+                "Payroll ID": "200",
+                "Business Date": date(2026, 7, 1),
+                "Worked Hours": 4.0,
+                "Confirmed Meals": 0,
+                "Probable Meals": 0,
+                "Potential Premium Workday": False,
+                "Estimated Meal Premium": 0.0,
+            },
+        ]
+    )
+    violations = pd.DataFrame(
+        [{"Employee Key": "100", "Employee": "Alex Smith", "Violation": "FIRST_MEAL_MISSING"}]
+    )
+    summary = build_employee_summary(
+        workdays=workdays,
+        violations=violations,
+        reviews=pd.DataFrame(),
+        punch_errors=pd.DataFrame(),
+        raw_timecards=pd.DataFrame(),
+        adjustments=pd.DataFrame(),
+    )
+    assert len(summary) == 2
+    assert set(summary["Payroll ID"]) == {"100", "200"}
+    assert summary.loc[summary["Payroll ID"] == "100", "Missing Meals"].iloc[0] == 1
+    assert summary.loc[summary["Payroll ID"] == "200", "Missing Meals"].iloc[0] == 0

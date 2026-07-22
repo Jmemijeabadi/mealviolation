@@ -65,7 +65,7 @@ class OracleBIClient:
         self.session.headers.update(
             {
                 "Accept": "application/json",
-                "User-Agent": "MealComplianceDashboard/3.0",
+                "User-Agent": "MealComplianceDashboard/3.3",
             }
         )
         self.tokens: TokenBundle | None = None
@@ -331,7 +331,14 @@ class OracleBIClient:
             payload["empNum"] = int(emp_num)
         if ext_payroll_id:
             payload["extPayrollID"] = str(ext_payroll_id)
-        return self.post("getTimeCardDetails", payload)
+        data = self.post("getTimeCardDetails", payload)
+        # Oracle normally echoes locRef and businessDates. Preserve request metadata
+        # as a defensive control so coverage and adjustment-inclusion checks remain
+        # reproducible even when a gateway omits an echoed request field.
+        data.setdefault("locRef", str(loc_ref))
+        data["_requestedBusDt"] = business_date.isoformat()
+        data["_includeAdjustmentsRequested"] = bool(include_adjustments)
+        return data
 
     def get_timecards_range(
         self,
@@ -366,10 +373,22 @@ def iter_timecards(payloads: Iterable[dict[str, Any]]) -> Iterable[tuple[str, st
     """Yield (loc_ref, business_date, timecard) from Oracle response payloads."""
     for payload in payloads:
         loc_ref = str(payload.get("locRef") or "")
-        for business_day in payload.get("businessDates", []) or []:
+        business_days = payload.get("businessDates", []) or []
+        if not business_days and isinstance(payload.get("timeCardDetails"), list):
+            business_days = [{
+                "busDt": payload.get("busDt") or payload.get("_requestedBusDt") or "",
+                "timeCardDetails": payload.get("timeCardDetails", []),
+            }]
+        adjustments_requested = payload.get("_includeAdjustmentsRequested")
+        for business_day in business_days:
             if not isinstance(business_day, dict):
                 continue
-            bus_dt = str(business_day.get("busDt") or "")
+            bus_dt = str(business_day.get("busDt") or payload.get("_requestedBusDt") or "")
             for timecard in business_day.get("timeCardDetails", []) or []:
                 if isinstance(timecard, dict):
-                    yield loc_ref, bus_dt, timecard
+                    if adjustments_requested is None:
+                        yield loc_ref, bus_dt, timecard
+                    else:
+                        enriched = dict(timecard)
+                        enriched["_adjustmentsRequested"] = adjustments_requested
+                        yield loc_ref, bus_dt, enriched
