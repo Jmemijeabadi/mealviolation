@@ -12,6 +12,14 @@ import streamlit as st
 
 from compliance.audit import build_adjustment_audit, build_adjustment_result_history
 from compliance.engine import AnalysisBundle, analyze_timecards
+from compliance.excel_import import (
+    ExcelImportError,
+    build_template_bytes,
+    convert_excel_to_payloads,
+    read_workbook_sheet,
+    suggest_mapping,
+    workbook_sheet_names,
+)
 from compliance.models import CaliforniaMealRules
 from compliance.normalize import (
     assign_legal_workdays,
@@ -46,7 +54,7 @@ from oracle_bi.client import OracleBIClient, OracleBIConfig, OracleBIError
 from oracle_bi.settings import config_from_secret_mapping, config_from_toml_file
 
 
-APP_VERSION = "3.7.1"
+APP_VERSION = "3.8.1"
 MAX_RANGE_DAYS = 31
 
 RESULT_LABELS = {
@@ -756,11 +764,26 @@ def analyze_payloads(
     return bundle, adjustment_audit, adjustment_history
 
 
+def _payload_timecard_count(payload: dict[str, Any]) -> int:
+    total = 0
+    for business_day in payload.get("businessDates", []) or []:
+        if isinstance(business_day, dict):
+            cards = business_day.get("timeCardDetails", []) or []
+            if isinstance(cards, list):
+                total += len(cards)
+    if not payload.get("businessDates") and isinstance(payload.get("timeCardDetails"), list):
+        total += len(payload.get("timeCardDetails") or [])
+    return total
+
+
 def analyze_api_source(
     client: OracleBIClient,
     loc_refs: list[str],
     start_date: date,
     end_date: date,
+    *,
+    excel_fallback: dict[str, Any] | None = None,
+    location_labels: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> tuple[AnalysisBundle, dict[str, Any], pd.DataFrame, pd.DataFrame]:
     employees_payloads: list[dict[str, Any]] = []
@@ -783,13 +806,55 @@ def analyze_api_source(
                 maximum_days=MAX_RANGE_DAYS,
             )
         )
+
+    oracle_counts = {ref: 0 for ref in loc_refs}
+    for payload in timecard_payloads:
+        ref = str(payload.get("locRef") or "")
+        if ref in oracle_counts:
+            oracle_counts[ref] += _payload_timecard_count(payload)
+    zero_oracle_refs = [ref for ref in loc_refs if oracle_counts.get(ref, 0) == 0]
+
+    excel_diagnostics: dict[str, Any] | None = None
+    excel_used_refs: list[str] = []
+    if excel_fallback and zero_oracle_refs:
+        converted = convert_excel_to_payloads(
+            excel_fallback["frame"],
+            mapping=excel_fallback["mapping"],
+            location_labels=location_labels or {ref: ref for ref in loc_refs},
+            fallback_refs=zero_oracle_refs,
+            start_date=start_date,
+            end_date=end_date,
+            source_name=excel_fallback["filename"],
+        )
+        excel_diagnostics = converted.diagnostics
+        excel_used_refs = list(excel_diagnostics.get("locations_with_rows") or [])
+        # Oracle remains authoritative. Replace only locations that returned zero
+        # timecards and for which the Excel produced valid rows in the selected range.
+        if excel_used_refs:
+            timecard_payloads = [
+                payload for payload in timecard_payloads
+                if str(payload.get("locRef") or "") not in excel_used_refs
+            ] + converted.timecard_payloads
+            employees_payloads = [
+                payload for payload in employees_payloads
+                if str(payload.get("locRef") or "") not in excel_used_refs
+            ] + converted.employee_payloads
+            jobs_payloads = [
+                payload for payload in jobs_payloads
+                if str(payload.get("locRef") or "") not in excel_used_refs
+            ] + converted.job_payloads
+
     bundle, adjustment_audit, adjustment_history = analyze_payloads(
         timecard_payloads=timecard_payloads,
         employees_payloads=employees_payloads,
         jobs_payloads=jobs_payloads,
         locations_payload=locations_payload,
         selected_locations=loc_refs,
-        authorized_locations=[str(item.get("locRef")) for item in locations_payload.get("locations", []) or [] if isinstance(item, dict) and item.get("active", True)],
+        authorized_locations=[
+            str(item.get("locRef"))
+            for item in locations_payload.get("locations", []) or []
+            if isinstance(item, dict) and item.get("active", True)
+        ],
         start_date=start_date,
         end_date=end_date,
         **kwargs,
@@ -799,6 +864,13 @@ def analyze_api_source(
         "jobs_payloads": jobs_payloads,
         "locations_payload": locations_payload,
         "timecard_payloads": timecard_payloads,
+        "oracle_timecard_counts": oracle_counts,
+        "oracle_zero_data_locations": zero_oracle_refs,
+        "excel_fallback_locations": excel_used_refs,
+        "excel_required_locations": [
+            ref for ref in zero_oracle_refs if ref not in excel_used_refs
+        ],
+        "excel_import_diagnostics": excel_diagnostics,
     }
     return bundle, metadata, adjustment_audit, adjustment_history
 
@@ -829,6 +901,246 @@ def save_analysis(
 # ---------------------------------------------------------------------------
 # Source UI
 # ---------------------------------------------------------------------------
+
+
+def _mapping_selectbox(
+    *,
+    label: str,
+    field: str,
+    columns: list[str],
+    suggestions: dict[str, str | None],
+    required: bool = False,
+) -> str | None:
+    options: list[str | None] = [None] + columns
+    suggested = suggestions.get(field)
+    index = options.index(suggested) if suggested in options else 0
+    selected = st.selectbox(
+        label + (" *" if required else ""),
+        options,
+        index=index,
+        format_func=lambda value: "— No usar —" if value is None else str(value),
+        key=f"excel_map_{field}",
+    )
+    return selected
+
+
+def _active_excel_requirement(
+    *,
+    loc_refs: list[str],
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any] | None:
+    requirement = st.session_state.get("excel_fallback_required")
+    if not isinstance(requirement, dict):
+        return None
+    if requirement.get("loc_refs") != list(loc_refs):
+        return None
+    if requirement.get("start_date") != start_date.isoformat():
+        return None
+    if requirement.get("end_date") != end_date.isoformat():
+        return None
+    return requirement
+
+
+def render_excel_fallback_inputs(
+    *,
+    loc_refs: list[str],
+    location_labels: dict[str, str],
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any] | None:
+    st.markdown("#### Fallback para sucursales sin datos en Oracle")
+    requirement = _active_excel_requirement(
+        loc_refs=loc_refs,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    required_refs = list(requirement.get("missing_refs") or []) if requirement else []
+    required_labels = [location_labels.get(ref, ref) for ref in required_refs]
+
+    if required_refs:
+        st.error(
+            "Auditoría incompleta: Oracle MICROS no encontró timecards para "
+            + ", ".join(required_labels)
+            + f" en el periodo {start_date:%m/%d/%Y}–{end_date:%m/%d/%Y}. "
+            "Para incluir estas sucursales es necesario subir su reporte Time Card Detail y volver a ejecutar."
+        )
+    else:
+        st.caption(
+            "Oracle sigue siendo la fuente principal. El Excel se utilizará únicamente para "
+            "las ubicaciones seleccionadas que devuelvan cero timecards en todo el periodo."
+        )
+
+    c1, c2 = st.columns([2, 1])
+    uploader_label = (
+        "Subir Time Card Detail requerido para: " + ", ".join(required_labels)
+        if required_labels
+        else "Time Card Detail para fallback (opcional)"
+    )
+    with c1:
+        excel_files = st.file_uploader(
+            uploader_label,
+            type=["xlsx", "xls", "csv"],
+            accept_multiple_files=True,
+            key="excel_fallback_files",
+            help=(
+                "Puedes subir uno o varios reportes Time Card Detail, normalmente uno por sucursal. "
+                "La aplicación reconoce automáticamente la estructura exportada de MICROS. "
+                "Oracle nunca se mezcla con Excel para la misma ubicación."
+            ),
+        )
+    with c2:
+        st.download_button(
+            "Descargar plantilla alternativa",
+            data=build_template_bytes(),
+            file_name="meal_compliance_excel_fallback_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    if not excel_files:
+        if required_refs:
+            st.info(
+                "Exporta en MICROS el reporte **Time Card Detail** de cada sucursal indicada, "
+                "usando exactamente el mismo rango de fechas, súbelo aquí y ejecuta nuevamente."
+            )
+        else:
+            st.info(
+                "No es necesario cargar Excel mientras Oracle tenga información para todas las sucursales."
+            )
+        return None
+
+    frames: list[pd.DataFrame] = []
+    source_details: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    for file_index, excel_file in enumerate(excel_files):
+        file_bytes = excel_file.getvalue()
+        try:
+            sheet_names = workbook_sheet_names(file_bytes, excel_file.name)
+            sheet_name = "Reports" if "Reports" in sheet_names else sheet_names[0]
+            frame = read_workbook_sheet(file_bytes, excel_file.name, sheet_name)
+        except ExcelImportError as error:
+            errors.append(f"{excel_file.name}: {error}")
+            continue
+        if frame.empty:
+            errors.append(f"{excel_file.name}: la hoja seleccionada no contiene filas utilizables.")
+            continue
+
+        source_details.append(
+            {
+                "filename": excel_file.name,
+                "sheet_name": sheet_name,
+                "format": frame.attrs.get("source_format", "generic"),
+                "location": frame.attrs.get("source_location", ""),
+                "business_dates": frame.attrs.get("source_business_dates", ""),
+                "rows": int(len(frame)),
+            }
+        )
+        frame = frame.copy()
+        frame["_Source File"] = excel_file.name
+        frames.append(frame)
+
+    for error in errors:
+        st.error(error)
+    if not frames:
+        return None
+
+    frame = pd.concat(frames, ignore_index=True, sort=False)
+    columns = [str(column) for column in frame.columns if str(column) != "_Source File"]
+    suggestions = suggest_mapping(columns)
+    recognized = [item for item in source_details if item["format"] == "oracle_time_card_detail"]
+
+    if len(recognized) == len(source_details):
+        detected_locations = sorted(
+            {str(item["location"]).strip() for item in source_details if str(item["location"]).strip()}
+        )
+        st.success(
+            f"Formato Time Card Detail reconocido en {len(source_details)} archivo(s), "
+            f"con {len(frame):,} segmentos. "
+            + (
+                "Sucursales detectadas: " + ", ".join(detected_locations) + "."
+                if detected_locations
+                else ""
+            )
+        )
+    else:
+        st.warning(
+            "Al menos un archivo no coincide con el formato estándar Time Card Detail. "
+            "Revisa el mapeo antes de ejecutar."
+        )
+
+    with st.expander(
+        "Mapeo de columnas del Excel",
+        expanded=len(recognized) != len(source_details),
+    ):
+        r1 = st.columns(3)
+        with r1[0]:
+            location = _mapping_selectbox(label="Location", field="location", columns=columns, suggestions=suggestions)
+        with r1[1]:
+            business_date = _mapping_selectbox(label="Business Date", field="business_date", columns=columns, suggestions=suggestions, required=True)
+        with r1[2]:
+            payroll_id = _mapping_selectbox(label="Payroll ID", field="payroll_id", columns=columns, suggestions=suggestions)
+
+        r2 = st.columns(3)
+        with r2[0]:
+            employee_name = _mapping_selectbox(label="Employee Name", field="employee_name", columns=columns, suggestions=suggestions)
+        with r2[1]:
+            clock_in = _mapping_selectbox(label="Clock In", field="clock_in", columns=columns, suggestions=suggestions, required=True)
+        with r2[2]:
+            clock_out = _mapping_selectbox(label="Clock Out", field="clock_out", columns=columns, suggestions=suggestions, required=True)
+
+        st.markdown("**Meals explícitos — opcionales**")
+        r3 = st.columns(4)
+        with r3[0]:
+            meal_start = _mapping_selectbox(label="Meal Start", field="meal_start", columns=columns, suggestions=suggestions)
+        with r3[1]:
+            meal_end = _mapping_selectbox(label="Meal End", field="meal_end", columns=columns, suggestions=suggestions)
+        with r3[2]:
+            second_meal_start = _mapping_selectbox(label="Second Meal Start", field="second_meal_start", columns=columns, suggestions=suggestions)
+        with r3[3]:
+            second_meal_end = _mapping_selectbox(label="Second Meal End", field="second_meal_end", columns=columns, suggestions=suggestions)
+
+        st.markdown("**Campos operativos — opcionales**")
+        r4 = st.columns(4)
+        with r4[0]:
+            job_code = _mapping_selectbox(label="Job Code", field="job_code", columns=columns, suggestions=suggestions)
+        with r4[1]:
+            pay_rate = _mapping_selectbox(label="Pay Rate", field="pay_rate", columns=columns, suggestions=suggestions)
+        with r4[2]:
+            regular_hours = _mapping_selectbox(label="Regular Hours", field="regular_hours", columns=columns, suggestions=suggestions)
+        with r4[3]:
+            clock_out_status = _mapping_selectbox(label="Clock Out Status", field="clock_out_status", columns=columns, suggestions=suggestions)
+        shift_type = _mapping_selectbox(label="Shift Type", field="shift_type", columns=columns, suggestions=suggestions)
+        st.dataframe(
+            frame.drop(columns=["_Source File"], errors="ignore").head(12),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    mapping = {
+        "location": location,
+        "business_date": business_date,
+        "employee_name": employee_name,
+        "payroll_id": payroll_id,
+        "clock_in": clock_in,
+        "clock_out": clock_out,
+        "meal_start": meal_start,
+        "meal_end": meal_end,
+        "second_meal_start": second_meal_start,
+        "second_meal_end": second_meal_end,
+        "job_code": job_code,
+        "pay_rate": pay_rate,
+        "regular_hours": regular_hours,
+        "clock_out_status": clock_out_status,
+        "shift_type": shift_type,
+    }
+    return {
+        "frame": frame,
+        "mapping": mapping,
+        "filename": ", ".join(item["filename"] for item in source_details),
+        "files": source_details,
+    }
 
 
 def render_oracle_mode(
@@ -904,6 +1216,17 @@ def render_oracle_mode(
         call_count = len(loc_refs) * ((end_date - start_date).days + 1) if end_date >= start_date else 0
         st.caption(f"La consulta realizará aproximadamente {call_count} llamadas de timecards, más dimensiones.")
 
+        location_labels = {
+            option_map[label]: label.split(" — ")[0]
+            for label in selected_labels
+        }
+        excel_fallback = render_excel_fallback_inputs(
+            loc_refs=loc_refs,
+            location_labels=location_labels,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
         if end_date < start_date:
             st.error("La fecha final no puede ser anterior a la inicial.")
             return
@@ -928,7 +1251,12 @@ def render_oracle_mode(
                         control_totals=control_totals,
                         default_workday_start=default_workday_start,
                         default_classification=default_classification,
+                        excel_fallback=excel_fallback,
+                        location_labels=location_labels,
                     )
+                excel_used_refs = metadata.get("excel_fallback_locations") or []
+                zero_oracle_refs = metadata.get("oracle_zero_data_locations") or []
+                excel_required_refs = metadata.get("excel_required_locations") or []
                 context = {
                     "location_label": ", ".join(selected_labels),
                     "date_label": f"{start_date:%m/%d/%Y}–{end_date:%m/%d/%Y}",
@@ -937,9 +1265,39 @@ def render_oracle_mode(
                         {"ref": option_map[label], "label": label.split(" — ")[0]}
                         for label in selected_labels
                     ],
+                    "data_sources": (
+                        ["Oracle BI API", "Excel fallback"] if excel_used_refs else ["Oracle BI API"]
+                    ),
+                    "oracle_zero_data_locations": zero_oracle_refs,
+                    "excel_fallback_locations": excel_used_refs,
+                    "excel_required_locations": excel_required_refs,
+                    "excel_import_diagnostics": metadata.get("excel_import_diagnostics"),
                 }
                 save_analysis(bundle, metadata, audit, history, context, previous_snapshot)
-            except (OracleBIError, ValueError) as error:
+                if excel_required_refs:
+                    labels = [location_labels.get(ref, ref) for ref in excel_required_refs]
+                    st.session_state["excel_fallback_required"] = {
+                        "loc_refs": list(loc_refs),
+                        "missing_refs": list(excel_required_refs),
+                        "start_date": start_date.isoformat(),
+                        "end_date": end_date.isoformat(),
+                    }
+                    st.error(
+                        "Auditoría incompleta. Oracle MICROS no encontró información y todavía falta "
+                        "un Time Card Detail válido para: "
+                        + ", ".join(labels)
+                        + ". Sube el Excel del mismo periodo y vuelve a ejecutar."
+                    )
+                else:
+                    st.session_state.pop("excel_fallback_required", None)
+
+                if excel_used_refs:
+                    labels = [location_labels.get(ref, ref) for ref in excel_used_refs]
+                    st.success(
+                        "Fuente híbrida aplicada. Oracle se usó donde había datos y Excel únicamente en: "
+                        + ", ".join(labels)
+                    )
+            except (OracleBIError, ExcelImportError, ValueError) as error:
                 st.error(str(error))
             except Exception as error:
                 st.error(f"No fue posible completar el análisis: {type(error).__name__}: {error}")
@@ -1924,6 +2282,21 @@ def main() -> None:
 
     bundle = st.session_state.get("analysis_bundle")
     if bundle is not None:
+        analysis_context = st.session_state.get("analysis_context") or {}
+        fallback_refs = analysis_context.get("excel_fallback_locations") or []
+        if fallback_refs:
+            label_map = {
+                str(item.get("ref")): str(item.get("label") or item.get("ref"))
+                for item in analysis_context.get("selected_locations", [])
+                if isinstance(item, dict)
+            }
+            fallback_labels = [label_map.get(str(ref), str(ref)) for ref in fallback_refs]
+            st.info(
+                "**Fuente híbrida:** Oracle MICROS es la fuente principal. Excel se utilizó "
+                "únicamente para las ubicaciones sin timecards Oracle: "
+                + ", ".join(fallback_labels)
+                + "."
+            )
         render_results(bundle, show_advanced=show_advanced)
 
     if show_advanced:

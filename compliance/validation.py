@@ -98,6 +98,7 @@ def build_source_coverage(
                     "Response Present": True,
                     "Timecards Returned": len(cards) if isinstance(cards, list) else 0,
                     "Oracle Cursor UTC": cur_utc,
+                    "Source": str(payload.get("_sourceSystem") or "Oracle BI API"),
                 }
             )
             seen.add((loc_ref, bus_date))
@@ -115,11 +116,12 @@ def build_source_coverage(
                             "Response Present": False,
                             "Timecards Returned": 0,
                             "Oracle Cursor UTC": "",
+                            "Source": "Missing",
                         }
                     )
             current += timedelta(days=1)
     if not rows:
-        return pd.DataFrame(columns=["Location Ref", "Business Date", "Response Present", "Timecards Returned", "Oracle Cursor UTC"])
+        return pd.DataFrame(columns=["Location Ref", "Business Date", "Response Present", "Timecards Returned", "Oracle Cursor UTC", "Source"])
     return pd.DataFrame(rows).sort_values(["Location Ref", "Business Date"]).reset_index(drop=True)
 
 

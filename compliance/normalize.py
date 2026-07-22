@@ -269,6 +269,9 @@ def normalize_timecards(
                 "adjustments": adjustment_items,
                 "added_utc": pd.to_datetime(card.get("addedUTC"), errors="coerce", utc=True),
                 "last_updated_utc": pd.to_datetime(card.get("lastUpdatedUTC"), errors="coerce", utc=True),
+                "source_system": str(card.get("_sourceSystem") or "Oracle BI API"),
+                "source_file": str(card.get("_sourceFile") or ""),
+                "source_row": card.get("_sourceRow"),
                 "raw": card,
             }
         )
