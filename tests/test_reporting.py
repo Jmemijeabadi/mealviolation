@@ -113,3 +113,70 @@ def test_employee_summary_does_not_merge_duplicate_names_with_different_keys() -
     assert set(summary["Payroll ID"]) == {"100", "200"}
     assert summary.loc[summary["Payroll ID"] == "100", "Missing Meals"].iloc[0] == 1
     assert summary.loc[summary["Payroll ID"] == "200", "Missing Meals"].iloc[0] == 0
+
+
+def test_violation_employee_summary_groups_reasons_and_dates() -> None:
+    from compliance.reporting import build_violation_employee_summary
+
+    violations = pd.DataFrame(
+        [
+            {
+                "Employee Key": "123",
+                "Employee": "Jane Doe",
+                "Payroll ID": "123",
+                "Legal Workday Date": date(2026, 7, 1),
+                "Location": "Downtown",
+                "Violation": "FIRST_MEAL_MISSING",
+            },
+            {
+                "Employee Key": "123",
+                "Employee": "Jane Doe",
+                "Payroll ID": "123",
+                "Legal Workday Date": date(2026, 7, 2),
+                "Location": "Downtown",
+                "Violation": "FIRST_MEAL_MISSING",
+            },
+            {
+                "Employee Key": "123",
+                "Employee": "Jane Doe",
+                "Payroll ID": "123",
+                "Legal Workday Date": date(2026, 7, 2),
+                "Location": "Uptown",
+                "Violation": "SECOND_MEAL_LATE",
+            },
+        ]
+    )
+    summary = build_violation_employee_summary(violations)
+    row = summary.iloc[0]
+    assert row["Violations"] == 3
+    assert row["Principal Reason Code"] == "FIRST_MEAL_MISSING"
+    assert row["Reason Breakdown"] == "FIRST_MEAL_MISSING:2 | SECOND_MEAL_LATE:1"
+    assert row["Affected Days"] == 2
+    assert row["Affected Dates"] == "2026-07-01, 2026-07-02"
+    assert row["Locations"] == "Downtown, Uptown"
+
+
+def test_violation_employee_summary_keeps_same_name_separate_by_key() -> None:
+    from compliance.reporting import build_violation_employee_summary
+
+    violations = pd.DataFrame(
+        [
+            {
+                "Employee Key": "100",
+                "Employee": "Alex Smith",
+                "Payroll ID": "100",
+                "Business Date": date(2026, 7, 1),
+                "Violation": "FIRST_MEAL_MISSING",
+            },
+            {
+                "Employee Key": "200",
+                "Employee": "Alex Smith",
+                "Payroll ID": "200",
+                "Business Date": date(2026, 7, 1),
+                "Violation": "FIRST_MEAL_LATE",
+            },
+        ]
+    )
+    summary = build_violation_employee_summary(violations)
+    assert len(summary) == 2
+    assert set(summary["Payroll ID"]) == {"100", "200"}

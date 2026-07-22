@@ -27,13 +27,13 @@ from compliance.normalize import (
     regular_rate_rows_to_records,
     workday_rows_to_records,
 )
-from compliance.reporting import build_employee_summary
+from compliance.reporting import build_employee_summary, build_violation_employee_summary
 from compliance.snapshot import compare_snapshot_to_bundle, create_snapshot_bytes, load_snapshot_bytes
 from compliance.validation import build_data_quality_report, build_source_coverage
 from oracle_bi.client import OracleBIClient, OracleBIConfig, OracleBIError
 
 
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.4.0"
 MAX_RANGE_DAYS = 31
 
 RESULT_LABELS = {
@@ -65,6 +65,24 @@ RESULT_LABELS = {
     "DATA_INTEGRITY_BLOCKED": "Conclusión bloqueada por integridad de datos",
     "INCONCLUSIVE": "Resultado no concluyente",
 }
+
+AUDITOR_REASON_LABELS = {
+    "FIRST_MEAL_MISSING": "No tomó el primer meal",
+    "FIRST_MEAL_LATE": "Primer meal después de la 5.ª hora",
+    "FIRST_MEAL_SHORT": "Primer meal menor de 30 minutos",
+    "SECOND_MEAL_MISSING": "No tomó el segundo meal",
+    "SECOND_MEAL_LATE": "Segundo meal después de la 10.ª hora",
+    "SECOND_MEAL_SHORT": "Segundo meal menor de 30 minutos",
+}
+
+AUDITOR_REASON_ORDER = [
+    "FIRST_MEAL_MISSING",
+    "FIRST_MEAL_LATE",
+    "FIRST_MEAL_SHORT",
+    "SECOND_MEAL_MISSING",
+    "SECOND_MEAL_LATE",
+    "SECOND_MEAL_SHORT",
+]
 
 RESULT_ACTIONS = {
     "FIRST_MEAL_MISSING": "Confirmar que no hubo meal, revisar evidencia y el premium del workday.",
@@ -256,8 +274,8 @@ def render_header() -> None:
         f"""
         <div class="hero">{image}<div>
         <div class="hero-title">Meal Violations Dashboard</div>
-        <div class="hero-sub">Oracle MICROS Simphony · California meal-period audit</div>
-        <div class="hero-author">The Broken Yolk Cafe · By Jordan Memije</div>
+        <div class="hero-sub">Oracle MICROS Simphony · Auditoría de Meal Violations</div>
+        <div class="hero-author">Broken Yolk - By Jordan Memije</div>
         </div></div>
         """,
         unsafe_allow_html=True,
@@ -293,21 +311,29 @@ def render_policy_inputs() -> tuple[
     dict[str, Any] | None,
     str,
 ]:
-    st.sidebar.markdown("### Controles de cumplimiento")
-    classification_mode = st.sidebar.selectbox(
-        "Clasificación predeterminada",
-        [
-            "Estricto: desconocida (bloquea conclusión)",
-            "Provisional: todos no exentos",
-        ],
-        help="La opción provisional debe usarse solo si HR confirma que todo el alcance es no exento.",
-    )
-    default_classification = "UNKNOWN" if classification_mode.startswith("Estricto") else "NON_EXEMPT"
+    """Render HR/Payroll controls without overwhelming the auditor view."""
+    with st.sidebar.expander("Configuración avanzada · HR / Payroll", expanded=False):
+        st.caption(
+            "Estos controles protegen el cálculo, pero no forman parte de la revisión diaria del auditor."
+        )
+        classification_mode = st.selectbox(
+            "Clasificación predeterminada",
+            [
+                "Estricto: desconocida (bloquea conclusión)",
+                "Provisional: todos no exentos",
+            ],
+            help="La opción provisional debe usarse solo si HR confirma que todo el alcance es no exento.",
+        )
+        default_classification = (
+            "UNKNOWN" if classification_mode.startswith("Estricto") else "NON_EXEMPT"
+        )
 
-    with st.sidebar.expander("1. Clasificación, waivers y acuerdos", expanded=False):
-        policy_file = st.file_uploader("Employee policy CSV", type=["csv"], key="policy_csv")
+        st.markdown("**Clasificación, waivers y acuerdos**")
+        policy_file = st.file_uploader(
+            "Employee policy CSV", type=["csv"], key="policy_csv"
+        )
         st.download_button(
-            "Descargar plantilla",
+            "Plantilla de employee policy",
             data=(
                 "employee_key,classification,first_meal_waiver,second_meal_waiver,on_duty_meal_agreement,effective_date,expiration_date,document_reference,verified_by,notes\n"
                 "12345,NON_EXEMPT,false,false,false,2026-01-01,,HRIS-123,HR Manager,\n"
@@ -317,11 +343,18 @@ def render_policy_inputs() -> tuple[
             use_container_width=True,
         )
 
-    with st.sidebar.expander("2. Workday legal por ubicación", expanded=False):
-        workday_file = st.file_uploader("Workday configuration CSV", type=["csv"], key="workday_csv")
-        default_start = st.text_input("Fallback temporal", value="00:00", help="Solo para análisis preliminar; no se considera verificado.")
+        st.divider()
+        st.markdown("**Workday legal por ubicación**")
+        workday_file = st.file_uploader(
+            "Workday configuration CSV", type=["csv"], key="workday_csv"
+        )
+        default_start = st.text_input(
+            "Fallback temporal",
+            value="00:00",
+            help="Solo para análisis preliminar; no se considera verificado.",
+        )
         st.download_button(
-            "Descargar plantilla",
+            "Plantilla de workday",
             data=(
                 "location_ref,workday_start,timezone,effective_date,expiration_date,verified_by,source\n"
                 "BYC304,04:00,America/Los_Angeles,2026-01-01,,Payroll Manager,Payroll policy\n"
@@ -331,10 +364,13 @@ def render_policy_inputs() -> tuple[
             use_container_width=True,
         )
 
-    with st.sidebar.expander("3. Regular rate verificado", expanded=False):
-        rate_file = st.file_uploader("Regular rate CSV", type=["csv"], key="rate_csv")
+        st.divider()
+        st.markdown("**Regular rate verificado**")
+        rate_file = st.file_uploader(
+            "Regular rate CSV", type=["csv"], key="rate_csv"
+        )
         st.download_button(
-            "Descargar plantilla",
+            "Plantilla de regular rate",
             data=(
                 "employee_key,regular_rate,effective_date,expiration_date,source,verified_by\n"
                 "12345,24.75,2026-07-01,2026-07-15,Payroll calculation,Payroll Manager\n"
@@ -344,10 +380,13 @@ def render_policy_inputs() -> tuple[
             use_container_width=True,
         )
 
-    with st.sidebar.expander("4. Reconciliación con MICROS", expanded=False):
-        control_file = st.file_uploader("MICROS control totals CSV", type=["csv"], key="controls_csv")
+        st.divider()
+        st.markdown("**Reconciliación y snapshots**")
+        control_file = st.file_uploader(
+            "MICROS control totals CSV", type=["csv"], key="controls_csv"
+        )
         st.download_button(
-            "Descargar plantilla",
+            "Plantilla de control MICROS",
             data=(
                 "location_ref,business_date,timecards,employees,worked_hours,adjusted_timecards\n"
                 "BYC304,2026-07-20,42,18,126.50,3\n"
@@ -356,22 +395,32 @@ def render_policy_inputs() -> tuple[
             mime="text/csv",
             use_container_width=True,
         )
-
-    with st.sidebar.expander("5. Snapshot anterior", expanded=False):
-        snapshot_file = st.file_uploader("Audit snapshot JSON", type=["json"], key="snapshot_json")
+        snapshot_file = st.file_uploader(
+            "Audit snapshot JSON", type=["json"], key="snapshot_json"
+        )
 
     try:
         policy_records = policy_rows_to_records(load_employee_policy_csv(policy_file))
         workday_records = workday_rows_to_records(load_workday_config_csv(workday_file))
         rate_records = regular_rate_rows_to_records(load_regular_rate_csv(rate_file))
         control_totals = load_control_totals_csv(control_file)
-        previous_snapshot = load_snapshot_bytes(snapshot_file.getvalue()) if snapshot_file else None
+        previous_snapshot = (
+            load_snapshot_bytes(snapshot_file.getvalue()) if snapshot_file else None
+        )
     except ValueError as error:
         st.sidebar.error(str(error))
         policy_records, workday_records, rate_records = {}, {}, {}
         control_totals, previous_snapshot = pd.DataFrame(), None
 
-    return policy_records, workday_records, rate_records, control_totals, default_start, previous_snapshot, default_classification
+    return (
+        policy_records,
+        workday_records,
+        rate_records,
+        control_totals,
+        default_start,
+        previous_snapshot,
+        default_classification,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -793,89 +842,365 @@ def friendly_meals(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def render_dashboard(bundle: AnalysisBundle, employee_summary: pd.DataFrame, adjustment_audit: pd.DataFrame, result_history: pd.DataFrame) -> None:
-    stats = bundle.stats
-    missing = 0 if bundle.violations.empty else bundle.violations.get("Violation", pd.Series(dtype=str)).isin(["FIRST_MEAL_MISSING", "SECOND_MEAL_MISSING"]).sum()
-    late = 0 if bundle.violations.empty else bundle.violations.get("Violation", pd.Series(dtype=str)).isin(["FIRST_MEAL_LATE", "SECOND_MEAL_LATE"]).sum()
-    short = 0 if bundle.violations.empty else bundle.violations.get("Violation", pd.Series(dtype=str)).isin(["FIRST_MEAL_SHORT", "SECOND_MEAL_SHORT"]).sum()
-    confirmed = int(pd.to_numeric(bundle.workdays.get("Confirmed Meals", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if not bundle.workdays.empty else 0
-    expected = int(employee_summary["Meals Expected by Hours"].sum()) if not employee_summary.empty else 0
-    changed = int(result_history.get("Compliance Result Changed", pd.Series(dtype=bool)).fillna(False).sum()) if not result_history.empty else 0
+def _auditor_reason(code: Any) -> str:
+    text = str(code or "").strip()
+    return AUDITOR_REASON_LABELS.get(text, RESULT_LABELS.get(text, text))
 
-    if not bundle.data_quality.empty and bundle.data_quality["Blocking"].fillna(False).any():
-        st.markdown('<div class="callout callout-red"><b>Reporte bloqueado:</b> existen controles críticos de cobertura o reconciliación. Las presuntas violaciones se suprimieron hasta resolverlos.</div>', unsafe_allow_html=True)
-    elif stats.get("classification_unverified_workdays", 0):
-        st.markdown('<div class="callout callout-orange"><b>Resultados parciales:</b> hay empleados sin clasificación exento/no exento verificada.</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="callout callout-green"><b>Controles básicos completos:</b> revisa de todos modos los casos duty-free, waivers y ajustes.</div>', unsafe_allow_html=True)
 
-    cols = st.columns(6)
-    metrics = [
-        ("Presuntas violaciones", stats.get("presumed_violations", 0)),
-        ("Empleados afectados", 0 if bundle.violations.empty else bundle.violations["Employee Key"].nunique()),
-        ("Meals esperados", expected),
-        ("Meals por marcación", confirmed),
-        ("Ajustes", len(adjustment_audit)),
-        ("Ajustes que cambiaron resultado", changed),
+def _auditor_breakdown(value: Any) -> str:
+    if pd.isna(value) or not str(value).strip():
+        return ""
+    labels: list[str] = []
+    for part in str(value).split("|"):
+        item = part.strip()
+        if not item:
+            continue
+        code, separator, count = item.partition(":")
+        label = _auditor_reason(code.strip())
+        labels.append(f"{count.strip()} × {label}" if separator else label)
+    return " · ".join(labels)
+
+
+def _ui_employee_group(row: pd.Series) -> str:
+    key = str(row.get("Employee Key") or "").strip()
+    if key and key.lower() not in {"nan", "<na>"}:
+        return key
+    payroll = str(row.get("Payroll ID") or "").strip()
+    if payroll and payroll.lower() not in {"nan", "<na>"}:
+        return payroll
+    return "NAME::" + str(row.get("Employee") or "Empleado sin identificar").strip()
+
+
+def auditor_employee_table(summary: pd.DataFrame) -> pd.DataFrame:
+    if summary.empty:
+        return pd.DataFrame(
+            columns=[
+                "Empleado",
+                "ID nómina",
+                "Meal Violations",
+                "Razón principal",
+                "Desglose",
+                "Fechas afectadas",
+                "Ubicación(es)",
+            ]
+        )
+    result = summary.copy()
+    return pd.DataFrame(
+        {
+            "Empleado": result["Employee"],
+            "ID nómina": result["Payroll ID"],
+            "Meal Violations": result["Violations"],
+            "Razón principal": result["Principal Reason Code"].map(_auditor_reason),
+            "Desglose": result["Reason Breakdown"].map(_auditor_breakdown),
+            "Fechas afectadas": result["Affected Dates"],
+            "Ubicación(es)": result["Locations"],
+        }
+    )
+
+
+def auditor_violation_details(
+    bundle: AnalysisBundle,
+    *,
+    employee_group: str | None = None,
+    reason_codes: list[str] | None = None,
+) -> pd.DataFrame:
+    columns = [
+        "Fecha",
+        "Empleado",
+        "ID nómina",
+        "Razón",
+        "Entrada",
+        "Salida",
+        "Horas",
+        "Inicio meal",
+        "Duración meal (min)",
+        "Ubicación(es)",
+        "Ajuste manual",
     ]
-    for col, (label, value) in zip(cols, metrics):
-        col.metric(label, value)
+    if bundle.violations.empty:
+        return pd.DataFrame(columns=columns)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Meals faltantes", int(missing))
-    c2.metric("Meals tardíos", int(late))
-    c3.metric("Meals cortos", int(short))
-    c4.metric("Workdays multi-location", stats.get("multi_location_workdays", 0))
+    source = bundle.violations.copy()
+    source["_Employee Group"] = source.apply(_ui_employee_group, axis=1)
+    code_column = (
+        "Presumed Violation"
+        if "Presumed Violation" in source.columns
+        else "Violation"
+    )
+    if employee_group is not None:
+        source = source[source["_Employee Group"] == employee_group]
+    if reason_codes:
+        source = source[source[code_column].astype(str).isin(reason_codes)]
+    if source.empty:
+        return pd.DataFrame(columns=columns)
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown("### Meals por empleado")
-        if employee_summary.empty:
-            st.info("No hay empleados.")
-        else:
-            chart = employee_summary.head(15).set_index("Employee")[["Confirmed Meals", "Missing Meals", "Late Meals", "Short Meals"]]
-            chart.columns = ["Por marcación", "Faltantes", "Tardíos", "Cortos"]
-            st.bar_chart(chart, horizontal=True, stack=True, height=max(320, min(650, 38 * len(chart))))
-    with right:
-        st.markdown("### Presuntas violaciones por día")
-        if bundle.violations.empty:
-            st.info("No hay presuntas violaciones automáticas.")
-        else:
-            daily = bundle.violations.copy()
-            daily["Fecha"] = pd.to_datetime(daily.get("Legal Workday Date", daily.get("Business Date")), errors="coerce")
-            st.line_chart(daily.groupby("Fecha").size().rename("Presuntas violaciones"), height=320)
+    meal_lookup: dict[tuple[str, str, int], pd.Series] = {}
+    if not bundle.meals.empty:
+        meals = bundle.meals.copy()
+        meals["_Employee Group"] = meals.apply(_ui_employee_group, axis=1)
+        meal_date_column = (
+            "Legal Workday Date"
+            if "Legal Workday Date" in meals.columns
+            else "Business Date"
+        )
+        for _, meal in meals.iterrows():
+            date_key = _format_date(meal.get(meal_date_column))
+            try:
+                sequence = int(meal.get("Meal Sequence") or 0)
+            except (TypeError, ValueError):
+                sequence = 0
+            meal_lookup[(str(meal["_Employee Group"]), date_key, sequence)] = meal
 
-    st.markdown("### Empleados que requieren atención")
-    if employee_summary.empty:
-        st.info("No hay datos.")
-    else:
-        attention = employee_summary[employee_summary["Status"] != "Cumplimiento por marcación"].copy()
-        if attention.empty:
-            st.success("No hay empleados pendientes en el alcance actual.")
-        else:
-            st.dataframe(
-                attention[[
-                    "Status", "Employee", "Payroll ID", "Classification", "Locations", "Meals Expected by Hours",
-                    "Confirmed Meals", "Missing Meals", "Late Meals", "Short Meals", "Presumed Violations",
-                    "Review Cases", "Adjustment Records", "Adjustments Changing Result", "Premium Workdays",
-                ]].rename(columns={
-                    "Status":"Estado", "Employee":"Empleado", "Payroll ID":"ID nómina", "Classification":"Clasificación",
-                    "Locations":"Ubicaciones", "Meals Expected by Hours":"Meals esperados", "Confirmed Meals":"Por marcación",
-                    "Missing Meals":"Faltantes", "Late Meals":"Tardíos", "Short Meals":"Cortos",
-                    "Presumed Violations":"Presuntas violaciones", "Review Cases":"Revisiones", "Adjustment Records":"Ajustes",
-                    "Adjustments Changing Result":"Ajustes con impacto", "Premium Workdays":"Workdays premium",
-                }),
-                use_container_width=True,
-                hide_index=True,
+    workday_adjustments: dict[tuple[str, str], int] = {}
+    if not bundle.workdays.empty:
+        workdays = bundle.workdays.copy()
+        workdays["_Employee Group"] = workdays.apply(_ui_employee_group, axis=1)
+        workday_date_column = (
+            "Legal Workday Date"
+            if "Legal Workday Date" in workdays.columns
+            else "Business Date"
+        )
+        for _, workday in workdays.iterrows():
+            date_key = _format_date(workday.get(workday_date_column))
+            adjustment_value = pd.to_numeric(
+                workday.get("Adjustment Count", 0), errors="coerce"
+            )
+            workday_adjustments[(str(workday["_Employee Group"]), date_key)] = (
+                0 if pd.isna(adjustment_value) else int(adjustment_value)
             )
 
+    date_column = (
+        "Legal Workday Date"
+        if "Legal Workday Date" in source.columns
+        else "Business Date"
+    )
+    rows: list[dict[str, Any]] = []
+    for _, row in source.iterrows():
+        code = str(row.get(code_column) or "")
+        sequence = 1 if code.startswith("FIRST_") else 2 if code.startswith("SECOND_") else 0
+        date_key = _format_date(row.get(date_column))
+        group_key = str(row["_Employee Group"])
+        meal = meal_lookup.get((group_key, date_key, sequence))
+        rows.append(
+            {
+                "Fecha": date_key,
+                "Empleado": row.get("Employee", ""),
+                "ID nómina": row.get("Payroll ID", ""),
+                "Razón": _auditor_reason(code),
+                "Entrada": _format_time(row.get("First Clock In")),
+                "Salida": _format_time(row.get("Last Clock Out")),
+                "Horas": round(float(row.get("Worked Hours", 0) or 0), 2),
+                "Inicio meal": _format_time(meal.get("Meal Start")) if meal is not None else "—",
+                "Duración meal (min)": (
+                    round(float(meal.get("Duration Minutes", 0) or 0), 1)
+                    if meal is not None
+                    else "—"
+                ),
+                "Ubicación(es)": row.get("Location", ""),
+                "Ajuste manual": (
+                    "Sí"
+                    if workday_adjustments.get((group_key, date_key), 0) > 0
+                    else "No"
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns).sort_values(
+        ["Fecha", "Empleado", "Razón"], ascending=[False, True, True]
+    ).reset_index(drop=True)
 
-def render_results(bundle: AnalysisBundle) -> None:
+
+def friendly_punch_errors(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        {
+            "Empleado": df.get("Employee", ""),
+            "ID nómina": df.get("Payroll ID", ""),
+            "Fecha": df.get(
+                "Legal Workday Date", df.get("Business Date", pd.Series(dtype=object))
+            ).map(_format_date),
+            "Ubicación(es)": df.get("Location", ""),
+            "Tipo de error": df.get("Punch Error", ""),
+            "Acción": "Corregir o confirmar la marcación en MICROS.",
+        }
+    )
+
+
+def friendly_adjustment_impact(df: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "Fecha",
+        "Empleado",
+        "ID nómina",
+        "Ajustado por",
+        "Motivo",
+        "Resultado antes",
+        "Resultado después",
+        "Impacto",
+    ]
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+    source = df.copy()
+    changed = source.get(
+        "Compliance Result Changed", pd.Series(False, index=source.index)
+    ).fillna(False)
+    source = source[changed.astype(bool)]
+    if source.empty:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(
+        {
+            "Fecha": source.get(
+                "Legal Workday Date", pd.Series(dtype=object)
+            ).map(_format_date),
+            "Empleado": source.get("Employee", ""),
+            "ID nómina": source.get("Payroll ID", ""),
+            "Ajustado por": source.get("Manager", ""),
+            "Motivo": source.get("Reason", ""),
+            "Resultado antes": source.get("Presumed Violations Before", "").map(
+                lambda value: _labels(_split_codes(value)) or "Sin violación"
+            ),
+            "Resultado después": source.get("Presumed Violations After", "").map(
+                lambda value: _labels(_split_codes(value)) or "Sin violación"
+            ),
+            "Impacto": source.get("Impact Summary", ""),
+        }
+    )
+
+
+def render_auditor_dashboard(
+    bundle: AnalysisBundle,
+    violation_summary: pd.DataFrame,
+) -> None:
+    total_violations = int(len(bundle.violations))
+    affected_employees = int(len(violation_summary))
+    punch_errors = int(len(bundle.punch_errors))
+    workdays = int(bundle.stats.get("workdays", len(bundle.workdays)))
+
+    if not bundle.data_quality.empty and bundle.data_quality["Blocking"].fillna(False).any():
+        st.markdown(
+            '<div class="callout callout-orange"><b>Hay controles pendientes.</b> '
+            'El sistema bloqueó conclusiones que no tienen datos suficientes. '
+            'Los casos aparecen en “Requiere revisión”.</div>',
+            unsafe_allow_html=True,
+        )
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Meal Violations", total_violations)
+    k2.metric("Empleados afectados", affected_employees)
+    k3.metric("Punch Errors", punch_errors)
+    k4.metric("Jornadas analizadas", workdays)
+
+    if total_violations == 0:
+        st.success("No se detectaron Meal Violations automáticas en el alcance consultado.")
+        return
+
+    chart_left, chart_right = st.columns([3, 2])
+    with chart_left:
+        st.markdown("### Violaciones por empleado")
+        top = violation_summary.head(15).copy()
+        chart = top.set_index("Employee")["Violations"]
+        chart.index.name = "Empleado"
+        st.bar_chart(chart, horizontal=True, height=max(300, min(600, 34 * len(chart))))
+    with chart_right:
+        st.markdown("### Razones")
+        code_column = (
+            "Presumed Violation"
+            if "Presumed Violation" in bundle.violations.columns
+            else "Violation"
+        )
+        reasons = bundle.violations[code_column].astype(str).map(_auditor_reason).value_counts()
+        st.bar_chart(reasons, horizontal=True, height=300)
+
+
+def render_meal_violations_tab(
+    bundle: AnalysisBundle,
+    violation_summary: pd.DataFrame,
+) -> None:
+    render_auditor_dashboard(bundle, violation_summary)
+    if violation_summary.empty:
+        return
+
+    st.markdown("### Meal Violations por empleado")
+    filter_1, filter_2 = st.columns([2, 3])
+    with filter_1:
+        search = st.text_input(
+            "Buscar empleado",
+            placeholder="Nombre o Payroll ID",
+            key="auditor_employee_search",
+        ).strip().casefold()
+    with filter_2:
+        available_codes = [
+            code
+            for code in AUDITOR_REASON_ORDER
+            if code
+            in set(
+                bundle.violations.get(
+                    "Presumed Violation", bundle.violations.get("Violation", pd.Series(dtype=str))
+                ).astype(str)
+            )
+        ]
+        selected_labels = st.multiselect(
+            "Filtrar por razón",
+            [_auditor_reason(code) for code in available_codes],
+            default=[_auditor_reason(code) for code in available_codes],
+            key="auditor_reason_filter",
+        )
+        selected_codes = [
+            code for code in available_codes if _auditor_reason(code) in selected_labels
+        ]
+
+    filtered_violations = bundle.violations.copy()
+    code_column = (
+        "Presumed Violation"
+        if "Presumed Violation" in filtered_violations.columns
+        else "Violation"
+    )
+    if available_codes:
+        filtered_violations = filtered_violations[
+            filtered_violations[code_column].astype(str).isin(selected_codes)
+        ]
+    if search:
+        names = filtered_violations.get("Employee", pd.Series("", index=filtered_violations.index)).astype(str).str.casefold()
+        payroll = filtered_violations.get("Payroll ID", pd.Series("", index=filtered_violations.index)).astype(str).str.casefold()
+        filtered_violations = filtered_violations[names.str.contains(search, regex=False) | payroll.str.contains(search, regex=False)]
+
+    filtered_summary = build_violation_employee_summary(filtered_violations)
+    st.dataframe(
+        auditor_employee_table(filtered_summary),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Meal Violations": st.column_config.NumberColumn(format="%d"),
+        },
+    )
+
+    if filtered_summary.empty:
+        st.info("No hay resultados con los filtros seleccionados.")
+        return
+
+    options = {
+        f"{row['Employee']} — {row['Payroll ID']} ({int(row['Violations'])})": str(row["Employee Group"])
+        for _, row in filtered_summary.iterrows()
+    }
+    selected_label = st.selectbox(
+        "Ver detalle de un empleado",
+        list(options),
+        key="auditor_employee_detail",
+    )
+    details = auditor_violation_details(
+        bundle,
+        employee_group=options[selected_label],
+        reason_codes=selected_codes,
+    )
+    st.dataframe(details, use_container_width=True, hide_index=True)
+
+
+def render_results(bundle: AnalysisBundle, *, show_advanced: bool) -> None:
     context = st.session_state.get("analysis_context") or {}
     adjustment_audit = st.session_state.get("adjustment_audit", pd.DataFrame())
     result_history = st.session_state.get("adjustment_result_history", pd.DataFrame())
     comparison = st.session_state.get("snapshot_comparison", pd.DataFrame())
 
+    violation_summary = build_violation_employee_summary(bundle.violations)
     employee_summary = build_employee_summary(
         workdays=bundle.workdays,
         violations=bundle.violations,
@@ -886,101 +1211,134 @@ def render_results(bundle: AnalysisBundle) -> None:
     )
 
     st.markdown(
-        f"<div class='callout callout-blue'><b>{context.get('location_label','Análisis')}</b> · {context.get('date_label','')}</div>",
+        f"<div class='callout callout-blue'><b>{context.get('location_label','Análisis')}</b> · "
+        f"{context.get('date_label','')}</div>",
         unsafe_allow_html=True,
     )
-    st.caption("'Meal por marcación' confirma timestamps/status de Oracle; no demuestra por sí solo que el periodo fue duty-free.")
 
-    tabs = st.tabs([
-        "Dashboard", "Empleados", "Presuntas violaciones", "Revisión manual", "Auditoría de ajustes",
-        "Calidad de datos", "Jornadas y meals", "Cambios entre consultas", "Descargas",
-    ])
+    tab_names = [
+        "Meal Violations",
+        "Punch Errors",
+        "Requiere revisión",
+        "Ajustes con impacto",
+        "Más detalles",
+    ]
+    tabs = st.tabs(tab_names)
+
     with tabs[0]:
-        render_dashboard(bundle, employee_summary, adjustment_audit, result_history)
+        render_meal_violations_tab(bundle, violation_summary)
+
     with tabs[1]:
-        st.markdown("### Meals por empleado")
-        st.dataframe(employee_summary.rename(columns={
-            "Employee":"Empleado", "Payroll ID":"ID nómina", "Classification":"Clasificación", "Locations":"Ubicaciones",
-            "Workdays":"Jornadas", "Worked Hours":"Horas", "Meals Expected by Hours":"Meals esperados",
-            "Confirmed Meals":"Meals por marcación", "Probable Meals":"Meals probables", "Missing Meals":"Faltantes",
-            "Late Meals":"Tardíos", "Short Meals":"Cortos", "Presumed Violations":"Presuntas violaciones",
-            "Review Cases":"Revisiones", "Punch Errors":"Punch errors", "Adjusted Timecards":"Timecards ajustados",
-            "Adjustment Records":"Ajustes", "Adjustments Changing Result":"Ajustes con impacto", "Managers Involved":"Managers",
-            "Premium Workdays":"Workdays premium", "Premium Estimate":"Premium estimado", "Verified Premium":"Premium verificado",
-            "Meal Coverage %":"Cobertura por marcación %", "Status":"Estado",
-        }), use_container_width=True, hide_index=True)
-    with tabs[2]:
-        if bundle.violations.empty:
-            st.info("No hay presuntas violaciones automáticas con datos suficientes.")
+        st.markdown("### Punch Errors")
+        st.caption("Estos casos no aumentan el total de Meal Violations hasta corregir o confirmar la marcación.")
+        punch_table = friendly_punch_errors(bundle.punch_errors)
+        if punch_table.empty:
+            st.success("No se detectaron Punch Errors.")
         else:
-            st.dataframe(friendly_cases(bundle.violations, "Violation", include_premium=True), use_container_width=True, hide_index=True)
-    with tabs[3]:
-        if bundle.reviews.empty:
+            st.dataframe(punch_table, use_container_width=True, hide_index=True)
+
+    with tabs[2]:
+        st.markdown("### Casos que requieren revisión")
+        st.caption("No se cuentan como Meal Violations automáticas.")
+        review_table = friendly_cases(bundle.reviews, "Review", include_premium=False)
+        if review_table.empty:
             st.success("No hay casos pendientes de revisión.")
         else:
-            st.dataframe(friendly_cases(bundle.reviews, "Review", include_premium=False), use_container_width=True, hide_index=True)
-        if not bundle.punch_errors.empty:
-            st.markdown("### Punch errors")
-            st.dataframe(bundle.punch_errors, use_container_width=True, hide_index=True)
+            compact_columns = [
+                column
+                for column in [
+                    "Empleado",
+                    "ID nómina",
+                    "Fecha workday",
+                    "Ubicación(es)",
+                    "Hallazgo",
+                    "Acción",
+                ]
+                if column in review_table.columns
+            ]
+            st.dataframe(
+                review_table[compact_columns],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    with tabs[3]:
+        st.markdown("### Ajustes manuales que cambiaron el resultado")
+        st.caption("Solo se muestran ajustes que crearon, eliminaron o modificaron un hallazgo de meal compliance.")
+        impact_table = friendly_adjustment_impact(result_history)
+        if impact_table.empty:
+            st.success("No se detectaron ajustes manuales con impacto en Meal Violations.")
+        else:
+            st.dataframe(impact_table, use_container_width=True, hide_index=True)
+        with st.expander("Ver todos los ajustes técnicos", expanded=False):
+            if adjustment_audit.empty:
+                st.info("Oracle no devolvió ajustes para el alcance actual.")
+            else:
+                st.dataframe(adjustment_audit, use_container_width=True, hide_index=True)
+
     with tabs[4]:
-        st.markdown("### Cadena exacta de ajustes Oracle")
-        st.caption("La reconstrucción recorre los ajustes del estado final al original usando los valores previos que Oracle devuelve.")
-        if adjustment_audit.empty:
-            st.info("Oracle no devolvió ajustes para el alcance actual.")
-        else:
-            st.dataframe(adjustment_audit, use_container_width=True, hide_index=True)
-        st.markdown("### Impacto del ajuste en meal compliance")
-        if result_history.empty:
-            st.info("No hay ajustes con historial de reanálisis.")
-        else:
-            st.dataframe(result_history, use_container_width=True, hide_index=True)
-    with tabs[5]:
-        st.markdown("### Integridad y reconciliación")
-        if bundle.data_quality.empty:
-            st.success("No se detectaron issues de integridad en los controles disponibles.")
-        else:
-            st.dataframe(bundle.data_quality, use_container_width=True, hide_index=True)
-        st.markdown("### Reconciliación contra MICROS")
-        if bundle.reconciliation.empty:
-            st.info("Carga MICROS control totals para comparar timecards, empleados y horas.")
-        else:
-            st.dataframe(bundle.reconciliation, use_container_width=True, hide_index=True)
-        st.markdown("### Cobertura API")
-        st.dataframe(bundle.coverage, use_container_width=True, hide_index=True)
-    with tabs[6]:
-        wtab, mtab, rtab = st.tabs(["Workdays consolidados", "Meals detectados", "Timecards"])
-        with wtab:
+        detail_tabs = ["Turnos", "Meals detectados", "Descargas"]
+        if show_advanced:
+            detail_tabs.extend(["Administración", "Cambios entre consultas"])
+        nested = st.tabs(detail_tabs)
+        with nested[0]:
             st.dataframe(friendly_workdays(bundle.workdays), use_container_width=True, hide_index=True)
-        with mtab:
+        with nested[1]:
+            st.caption("Un meal por marcación confirma timestamps/status; no prueba por sí solo que fue duty-free.")
             st.dataframe(friendly_meals(bundle.meals), use_container_width=True, hide_index=True)
-        with rtab:
-            raw = bundle.raw_timecards.drop(columns=["raw"], errors="ignore").copy()
-            if "adjustments" in raw.columns:
-                raw["adjustments"] = raw["adjustments"].map(lambda value: json.dumps(value, ensure_ascii=False) if isinstance(value, list) else value)
-            st.dataframe(raw, use_container_width=True, hide_index=True)
-    with tabs[7]:
-        st.markdown("### Cambios contra el snapshot anterior o la consulta previa")
-        if comparison.empty:
-            st.info("No hay baseline anterior o no se detectaron cambios.")
-        else:
-            st.dataframe(comparison, use_container_width=True, hide_index=True)
-    with tabs[8]:
-        downloads = [
-            ("Resumen por empleado", employee_summary, "employee_meal_summary.csv"),
-            ("Presuntas violaciones", bundle.violations, "presumed_meal_violations.csv"),
-            ("Revisión manual", bundle.reviews, "meal_review_cases.csv"),
-            ("Auditoría de ajustes", adjustment_audit, "timecard_adjustment_audit.csv"),
-            ("Impacto de ajustes", result_history, "adjustment_compliance_impact.csv"),
-            ("Calidad de datos", bundle.data_quality, "data_quality_issues.csv"),
-            ("Reconciliación", bundle.reconciliation, "micros_reconciliation.csv"),
-            ("Workdays", bundle.workdays, "legal_workdays.csv"),
-            ("Meals", bundle.meals, "meal_candidates.csv"),
-            ("Cambios", comparison, "snapshot_changes.csv"),
-        ]
-        for label, frame, filename in downloads:
-            st.download_button(label, safe_csv_bytes(frame), filename, "text/csv", use_container_width=True)
-        snapshot = create_snapshot_bytes(bundle, app_version=APP_VERSION, context=context)
-        st.download_button("Descargar audit snapshot JSON", snapshot, "meal_compliance_audit_snapshot.json", "application/json", use_container_width=True)
+        with nested[2]:
+            downloads = [
+                ("Meal Violations por empleado", violation_summary, "meal_violations_by_employee.csv"),
+                ("Detalle de Meal Violations", auditor_violation_details(bundle), "meal_violations_detail.csv"),
+                ("Punch Errors", bundle.punch_errors, "punch_errors.csv"),
+                ("Requiere revisión", bundle.reviews, "meal_review_cases.csv"),
+                ("Ajustes con impacto", result_history, "adjustment_compliance_impact.csv"),
+                ("Todos los turnos", bundle.workdays, "legal_workdays.csv"),
+            ]
+            for label, frame, filename in downloads:
+                st.download_button(
+                    label,
+                    safe_csv_bytes(frame),
+                    filename,
+                    "text/csv",
+                    use_container_width=True,
+                )
+            snapshot = create_snapshot_bytes(bundle, app_version=APP_VERSION, context=context)
+            st.download_button(
+                "Descargar audit snapshot JSON",
+                snapshot,
+                "meal_compliance_audit_snapshot.json",
+                "application/json",
+                use_container_width=True,
+            )
+        if show_advanced:
+            with nested[3]:
+                st.markdown("### Calidad de datos y reconciliación")
+                if bundle.data_quality.empty:
+                    st.success("No se detectaron issues en los controles disponibles.")
+                else:
+                    st.dataframe(bundle.data_quality, use_container_width=True, hide_index=True)
+                if not bundle.reconciliation.empty:
+                    st.markdown("### Reconciliación MICROS")
+                    st.dataframe(bundle.reconciliation, use_container_width=True, hide_index=True)
+                st.markdown("### Cobertura API")
+                st.dataframe(bundle.coverage, use_container_width=True, hide_index=True)
+                st.markdown("### Resumen técnico por empleado")
+                st.dataframe(employee_summary, use_container_width=True, hide_index=True)
+                with st.expander("Timecards normalizados", expanded=False):
+                    raw = bundle.raw_timecards.drop(columns=["raw"], errors="ignore").copy()
+                    if "adjustments" in raw.columns:
+                        raw["adjustments"] = raw["adjustments"].map(
+                            lambda value: json.dumps(value, ensure_ascii=False)
+                            if isinstance(value, list)
+                            else value
+                        )
+                    st.dataframe(raw, use_container_width=True, hide_index=True)
+            with nested[4]:
+                if comparison.empty:
+                    st.info("No hay baseline anterior o no se detectaron cambios.")
+                else:
+                    st.dataframe(comparison, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -998,6 +1356,7 @@ def main() -> None:
 
     st.sidebar.markdown("## Meal Compliance")
     st.sidebar.caption(f"The Broken Yolk · Versión {APP_VERSION}")
+    show_advanced = st.sidebar.toggle("Mostrar administración", value=False)
     rules = render_rules()
     if st.sidebar.button("Cerrar conexión y borrar resultados", use_container_width=True):
         reset_state()
@@ -1008,7 +1367,15 @@ def main() -> None:
         default_start, previous_snapshot, default_classification,
     ) = render_policy_inputs()
 
-    source = st.radio("Fuente de datos", ["Oracle BI API", "JSON de Oracle para validación"], horizontal=True)
+    source = (
+        st.radio(
+            "Fuente de datos",
+            ["Oracle BI API", "JSON de Oracle para validación"],
+            horizontal=True,
+        )
+        if show_advanced
+        else "Oracle BI API"
+    )
     common = dict(
         rules=rules,
         policy_records=policy_records,
@@ -1026,11 +1393,12 @@ def main() -> None:
 
     bundle = st.session_state.get("analysis_bundle")
     if bundle is not None:
-        render_results(bundle)
+        render_results(bundle, show_advanced=show_advanced)
 
-    with st.expander("Alcance y límites"):
-        st.markdown(
-            """
+    if show_advanced:
+        with st.expander("Alcance y límites"):
+            st.markdown(
+                """
 - El motor consolida por **empleado + workday legal**, incluso entre varias ubicaciones.
 - Los empleados exentos se excluyen únicamente con clasificación activa verificada.
 - Los empleados sin clasificación, workday verificado o cobertura completa pueden quedar bloqueados.
@@ -1038,9 +1406,9 @@ def main() -> None:
 - El premium usa un regular rate verificado cuando se carga; de lo contrario muestra un proxy de base rate claramente identificado.
 - La auditoría reconstruye el antes/después de cada ajuste con los valores `prev*` de Oracle y reanaliza el workday.
 - Para una cadena histórica permanente, descarga el snapshot en cada cierre o conecta posteriormente un almacenamiento durable.
-            """
-        )
-    st.markdown('<div class="footer">Meal Violations Dashboard · The Broken Yolk Cafe · Developed by Jordan Memije</div>', unsafe_allow_html=True)
+                """
+            )
+    st.markdown('<div class="footer">Meal Violations Dashboard · Broken Yolk · By Jordan Memije</div>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

@@ -261,3 +261,115 @@ def build_employee_summary(
         ["Presumed Violations", "Review Cases", "Adjustments Changing Result", "Employee"],
         ascending=[False, False, False, True],
     ).reset_index(drop=True)
+
+
+def build_violation_employee_summary(violations: pd.DataFrame) -> pd.DataFrame:
+    """Return one concise auditor-facing row per employee with meal violations.
+
+    The summary preserves distinct employees that share the same display name by
+    grouping with the normalized employee key/payroll fallback used elsewhere in
+    the reporting module. Dates are stored as ISO strings so exports remain
+    stable and easy to filter.
+    """
+    columns = [
+        "Employee Group",
+        "Employee",
+        "Payroll ID",
+        "Violations",
+        "Principal Reason Code",
+        "Reason Breakdown",
+        "Affected Days",
+        "Affected Dates",
+        "Locations",
+    ]
+    if violations.empty:
+        return pd.DataFrame(columns=columns)
+
+    source = _with_employee_group(violations)
+    code_column = (
+        "Presumed Violation"
+        if "Presumed Violation" in source.columns
+        else "Violation"
+    )
+    if code_column not in source.columns:
+        return pd.DataFrame(columns=columns)
+
+    date_column = (
+        "Legal Workday Date"
+        if "Legal Workday Date" in source.columns
+        else "Business Date"
+        if "Business Date" in source.columns
+        else None
+    )
+    if date_column is None:
+        source["_Violation Date"] = pd.NaT
+    else:
+        source["_Violation Date"] = pd.to_datetime(
+            source[date_column], errors="coerce"
+        ).dt.date
+
+    if "Location" not in source.columns:
+        source["Location"] = ""
+    if "Payroll ID" not in source.columns:
+        source["Payroll ID"] = ""
+    if "Employee" not in source.columns:
+        source["Employee"] = "Empleado sin identificar"
+
+    rows: list[dict[str, Any]] = []
+    for employee_group, group in source.groupby("_Employee Group", sort=False):
+        code_counts = (
+            group[code_column]
+            .astype("string")
+            .fillna("")
+            .str.strip()
+        )
+        code_counts = code_counts[code_counts.ne("")].value_counts()
+        if code_counts.empty:
+            continue
+        max_count = int(code_counts.max())
+        principal_candidates = sorted(
+            str(code) for code, count in code_counts.items() if int(count) == max_count
+        )
+        principal = principal_candidates[0]
+        breakdown = " | ".join(
+            f"{code}:{int(count)}" for code, count in code_counts.items()
+        )
+        dates = sorted(
+            {value for value in group["_Violation Date"].tolist() if pd.notna(value)}
+        )
+        locations = sorted(
+            {
+                part.strip()
+                for value in group["Location"].fillna("").astype(str)
+                for part in value.split(",")
+                if part.strip()
+            }
+        )
+        employee = next(
+            (str(value).strip() for value in group["Employee"] if str(value).strip()),
+            "Empleado sin identificar",
+        )
+        payroll_id = next(
+            (str(value).strip() for value in group["Payroll ID"] if str(value).strip()),
+            "",
+        )
+        rows.append(
+            {
+                "Employee Group": str(employee_group),
+                "Employee": employee,
+                "Payroll ID": payroll_id,
+                "Violations": int(len(group)),
+                "Principal Reason Code": principal,
+                "Reason Breakdown": breakdown,
+                "Affected Days": int(len(dates)),
+                "Affected Dates": ", ".join(value.isoformat() for value in dates),
+                "Locations": ", ".join(locations),
+            }
+        )
+
+    result = pd.DataFrame(rows, columns=columns)
+    if result.empty:
+        return result
+    return result.sort_values(
+        ["Violations", "Employee"], ascending=[False, True]
+    ).reset_index(drop=True)
