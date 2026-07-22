@@ -46,7 +46,7 @@ from oracle_bi.client import OracleBIClient, OracleBIConfig, OracleBIError
 from oracle_bi.settings import config_from_secret_mapping, config_from_toml_file
 
 
-APP_VERSION = "3.7.0"
+APP_VERSION = "3.7.1"
 MAX_RANGE_DAYS = 31
 
 RESULT_LABELS = {
@@ -436,13 +436,49 @@ def render_global_styles() -> None:
         .stApp { background:var(--bg); }
         .block-container { max-width:1440px; padding-top:1.2rem; padding-bottom:2.5rem; }
         [data-testid="stSidebar"] { background:#FFFFFF; border-right:1px solid var(--border); }
-        .hero { background:linear-gradient(135deg,#fff 0%,#eef8ff 100%); border:1px solid var(--border);
-                border-radius:20px; padding:20px 24px; display:flex; align-items:center; gap:20px;
-                box-shadow:0 8px 28px rgba(16,24,40,.06); margin-bottom:18px; }
-        .hero img { width:88px; height:auto; }
-        .hero-title { color:var(--ink); font-size:2rem; line-height:1.05; font-weight:850; }
-        .hero-sub { color:var(--muted); font-size:1rem; margin-top:5px; }
-        .hero-author { color:var(--blue-dark); font-weight:750; margin-top:7px; }
+        .hero {
+            width:100%;
+            min-height:132px;
+            box-sizing:border-box;
+            overflow:visible;
+            background:linear-gradient(135deg,#fff 0%,#eef8ff 100%);
+            border:1px solid var(--border);
+            border-radius:20px;
+            padding:20px 26px;
+            display:flex;
+            align-items:center;
+            gap:20px;
+            box-shadow:0 8px 28px rgba(16,24,40,.06);
+            margin-bottom:18px;
+        }
+        .hero-logo {
+            flex:0 0 74px;
+            width:74px;
+            min-width:74px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            align-self:center;
+            overflow:visible;
+        }
+        .hero-logo img {
+            width:70px;
+            max-width:70px;
+            max-height:86px;
+            height:auto;
+            display:block;
+            object-fit:contain;
+        }
+        .hero-copy {
+            min-width:0;
+            display:flex;
+            flex-direction:column;
+            justify-content:center;
+            padding:2px 0;
+        }
+        .hero-title { color:var(--ink); font-size:2rem; line-height:1.08; font-weight:850; margin:0; }
+        .hero-sub { color:var(--muted); font-size:1rem; line-height:1.35; margin-top:7px; }
+        .hero-author { color:var(--blue-dark); font-weight:750; line-height:1.3; margin-top:7px; }
         .section-title { font-size:1.25rem; font-weight:800; color:var(--ink); margin:10px 0 8px; }
         .callout { border-radius:12px; padding:13px 15px; margin:8px 0 14px; border:1px solid; }
         .callout-red { background:#FEF3F2; border-color:#FECDCA; color:#912018; }
@@ -463,7 +499,15 @@ def render_global_styles() -> None:
         .stTabs [aria-selected="true"] { background:#E8F6FF; color:var(--blue-dark); }
         [data-testid="stDataFrame"] { background:#fff; border-radius:12px; }
         .footer { text-align:center; color:#98A2B3; font-size:.82rem; padding-top:24px; }
-        @media(max-width:760px){ .block-container{padding-left:.75rem;padding-right:.75rem}.hero{padding:15px;align-items:flex-start}.hero img{width:62px}.hero-title{font-size:1.45rem} }
+        @media(max-width:760px){
+            .block-container{padding-left:.75rem;padding-right:.75rem}
+            .hero{min-height:auto;padding:16px 18px;gap:14px;align-items:center}
+            .hero-logo{flex-basis:58px;width:58px;min-width:58px}
+            .hero-logo img{width:56px;max-width:56px;max-height:70px}
+            .hero-title{font-size:1.45rem;line-height:1.12}
+            .hero-sub{font-size:.92rem;margin-top:5px}
+            .hero-author{font-size:.92rem;margin-top:5px}
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -475,11 +519,14 @@ def render_header() -> None:
     image = f'<img src="{logo}" alt="The Broken Yolk Cafe">' if logo else ""
     st.markdown(
         f"""
-        <div class="hero">{image}<div>
-        <div class="hero-title">Meal Violations Dashboard</div>
-        <div class="hero-sub">Oracle MICROS Simphony · Auditoría de Meal Violations</div>
-        <div class="hero-author">Broken Yolk - By Jordan Memije</div>
-        </div></div>
+        <div class="hero">
+            <div class="hero-logo">{image}</div>
+            <div class="hero-copy">
+                <div class="hero-title">Meal Violations Dashboard</div>
+                <div class="hero-sub">Oracle MICROS Simphony · Auditoría de Meal Violations</div>
+                <div class="hero-author">Broken Yolk - By Jordan Memije</div>
+            </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
